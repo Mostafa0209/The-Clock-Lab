@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="The Clock Lab, led by Paloma Mas at CRAG, studies the molecular mechanisms of plant circadian clocks.">
+  <title>The Clock Lab | CRAG</title>
+  <style>
+    :root {
+      --ink: #16352c;
+      --green: #256b4a;
+      --lime: #b8dc72;
+      --cream: #f5f3e9;
+      --paper: #fffdf7;
+      --orange: #e99945;
+      --muted: #61736c;
+      --line: #d8dfd7;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font-family: Arial, Helvetica, sans-serif; line-height: 1.65; }
+    a { color: inherit; }
+    .container { width: min(1120px, calc(100% - 40px)); margin: auto; }
+    header { position: sticky; top: 0; z-index: 20; background: rgba(255,253,247,.94); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); }
+    nav { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+    .brand { text-decoration: none; font-weight: 800; letter-spacing: -.03em; font-size: 1.3rem; }
+    .brand span { color: var(--green); }
+    .nav-links { display: flex; gap: 24px; align-items: center; }
+    .nav-links a { text-decoration: none; font-size: .93rem; font-weight: 700; }
+    .nav-links a:hover { color: var(--green); }
+    .hero { overflow: hidden; background: linear-gradient(135deg, #173d31 0%, #256b4a 65%, #43805e 100%); color: white; }
+    .hero-grid { min-height: 630px; display: grid; grid-template-columns: 1.15fr .85fr; align-items: center; gap: 70px; padding: 70px 0; }
+    .eyebrow { display: inline-flex; gap: 10px; align-items: center; text-transform: uppercase; letter-spacing: .13em; font-size: .76rem; font-weight: 800; color: var(--lime); }
+    .eyebrow::before { content: ""; width: 36px; height: 2px; background: currentColor; }
+    h1 { max-width: 780px; margin: 20px 0; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(3.2rem, 7vw, 6.8rem); line-height: .96; letter-spacing: -.055em; font-weight: 500; }
+    .hero p { max-width: 650px; color: #e1eee6; font-size: 1.18rem; }
+    .buttons { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+    .button { display: inline-block; padding: 13px 19px; border: 1px solid rgba(255,255,255,.45); text-decoration: none; font-weight: 800; border-radius: 3px; }
+    .button.primary { color: var(--ink); background: var(--lime); border-color: var(--lime); }
+    .clock-art { position: relative; margin: auto; width: min(360px, 80vw); aspect-ratio: 1; border: 1px solid rgba(255,255,255,.4); border-radius: 50%; }
+    .clock-art::before, .clock-art::after { content: ""; position: absolute; left: 50%; bottom: 50%; width: 4px; transform-origin: 50% 100%; border-radius: 8px; background: var(--lime); }
+    .clock-art::before { height: 31%; transform: translateX(-50%) rotate(35deg); }
+    .clock-art::after { height: 39%; transform: translateX(-50%) rotate(145deg); background: white; }
+    .clock-art .sun { position: absolute; width: 84px; height: 84px; top: 12%; right: 7%; background: var(--orange); border-radius: 50%; box-shadow: 0 0 0 16px rgba(233,153,69,.12); }
+    .clock-art .leaf { position: absolute; width: 105px; height: 58px; bottom: 11%; left: 8%; background: var(--lime); border-radius: 100% 0 100% 0; transform: rotate(17deg); }
+    section { padding: 100px 0; }
+    .section-head { display: grid; grid-template-columns: .65fr 1.35fr; gap: 50px; margin-bottom: 45px; }
+    .kicker { color: var(--green); text-transform: uppercase; letter-spacing: .13em; font-size: .75rem; font-weight: 800; }
+    h2 { margin: 7px 0 0; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(2.1rem, 4vw, 3.7rem); line-height: 1.08; font-weight: 500; letter-spacing: -.035em; }
+    .lead { margin: 3px 0 0; color: var(--muted); font-size: 1.12rem; }
+    .research { background: var(--cream); }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .card { min-height: 260px; padding: 30px; background: var(--paper); border-top: 4px solid var(--green); }
+    .card .number { color: var(--orange); font-size: .82rem; font-weight: 800; }
+    .card h3 { margin: 32px 0 10px; font-family: Georgia, 'Times New Roman', serif; font-size: 1.55rem; font-weight: 500; }
+    .card p { color: var(--muted); margin: 0; }
+    .publications { background: var(--paper); }
+    .pub { display: grid; grid-template-columns: 100px 1fr auto; gap: 25px; padding: 28px 0; border-top: 1px solid var(--line); align-items: start; }
+    .pub:last-child { border-bottom: 1px solid var(--line); }
+    .year { color: var(--green); font-size: 1.25rem; font-weight: 800; }
+    .pub h3 { margin: 0 0 7px; font-family: Georgia, 'Times New Roman', serif; font-size: 1.28rem; line-height: 1.35; font-weight: 500; }
+    .pub p { margin: 0; color: var(--muted); font-size: .94rem; }
+    .pub a { color: var(--green); font-weight: 800; white-space: nowrap; }
+    .people { background: #e8f0e9; }
+    .person { display: grid; grid-template-columns: 170px 1fr; gap: 35px; align-items: center; max-width: 760px; }
+    .portrait-placeholder { display: grid; place-items: center; width: 170px; aspect-ratio: 1; background: var(--green); color: white; border-radius: 50%; font-family: Georgia, serif; font-size: 2.8rem; }
+    .person h3 { margin: 0; font-family: Georgia, serif; font-size: 2rem; font-weight: 500; }
+    .person p { margin: 5px 0; color: var(--muted); }
+    .contact { color: white; background: var(--ink); }
+    .contact-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 60px; }
+    .contact h2 { max-width: 680px; }
+    .contact p { color: #c9d9d1; }
+    .contact a { color: var(--lime); }
+    footer { padding: 24px 0; background: #10271f; color: #b8c8c0; font-size: .84rem; }
+    @media (max-width: 800px) {
+      .nav-links { display: none; }
+      .hero-grid, .section-head, .contact-grid { grid-template-columns: 1fr; }
+      .hero-grid { min-height: auto; gap: 25px; }
+      .clock-art { width: 230px; }
+      .cards { grid-template-columns: 1fr; }
+      .pub { grid-template-columns: 65px 1fr; }
+      .pub a { grid-column: 2; }
+      .person { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container" aria-label="Main navigation">
+      <a class="brand" href="#top">The Clock <span>Lab</span></a>
+      <div class="nav-links">
+        <a href="#about">About</a>
+        <a href="#research">Research</a>
+        <a href="#publications">Publications</a>
+        <a href="#people">People</a>
+        <a href="#contact">Contact</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <div class="eyebrow">Plant circadian biology</div>
+          <h1>How plants keep time.</h1>
+          <p>We investigate the molecular mechanisms that generate and coordinate circadian rhythms in plants—from chromatin and transcription to intercellular communication, growth and crop productivity.</p>
+          <div class="buttons">
+            <a class="button primary" href="#research">Explore our research</a>
+            <a class="button" href="#publications">Recent publications</a>
+          </div>
+        </div>
+        <div class="clock-art" aria-hidden="true"><span class="sun"></span><span class="leaf"></span></div>
+      </div>
+    </section>
+
+    <section id="about">
+      <div class="container section-head">
+        <div><div class="kicker">About the lab</div><h2>Time is part of plant biology.</h2></div>
+        <p class="lead">Led by Prof. Paloma Mas at the Centre for Research in Agricultural Genomics (CRAG), The Clock Lab studies how plants measure time and use temporal information to synchronize development, metabolism and responses to the environment.</p>
+      </div>
+    </section>
+
+    <section class="research" id="research">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">Research</div><h2>From clocks to crops</h2></div>
+          <p class="lead">We combine molecular genetics, functional genomics, cell biology and computational approaches in Arabidopsis and tomato.</p>
+        </div>
+        <div class="cards">
+          <article class="card"><div class="number">01</div><h3>Circadian mechanisms</h3><p>Understanding the molecular networks that generate robust 24-hour rhythms and connect environmental signals with plant physiology.</p></article>
+          <article class="card"><div class="number">02</div><h3>Chromatin &amp; transcription</h3><p>Studying how chromatin state, transcription and genome regulation change across the day–night cycle.</p></article>
+          <article class="card"><div class="number">03</div><h3>Communication &amp; growth</h3><p>Exploring how clocks communicate across cells, tissues and organs to coordinate development and crop performance.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="publications" id="publications">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">Selected work</div><h2>Publications</h2></div>
+          <p class="lead">Recent and representative research from the group. A complete, filterable publication list can be added next.</p>
+        </div>
+        <article class="pub">
+          <div class="year">2025</div>
+          <div><h3>Gene editing of clock components in <em>Solanum lycopersicum</em>: Effects on gene expression, development, and productivity</h3><p>Alary B., Mortada M. &amp; Mas P. · <em>The Plant Journal</em> 123: e70383</p></div>
+          <a href="https://doi.org/10.1111/tpj.70383" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2024</div>
+          <div><h3>Dissecting the complexity of local and systemic circadian communication in plants</h3><p>Mortada M., Xiong L. &amp; Mas P. · <em>npj Biological Timing and Sleep</em></p></div>
+          <a href="https://doi.org/10.1038/s44323-024-00003-3" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2022</div>
+          <div><h3>Circadian autonomy and rhythmic precision of the Arabidopsis female reproductive organ</h3><p>Okada M., Yang Z. &amp; Mas P. · <em>Developmental Cell</em></p></div>
+          <a href="https://www.sciencedirect.com/science/article/pii/S1534580722005998" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="people" id="people">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">People</div><h2>Our team</h2></div>
+          <p class="lead">The complete group roster and individual profiles will be added after the homepage structure is approved.</p>
+        </div>
+        <article class="person">
+          <div class="portrait-placeholder" aria-label="Photo placeholder">PM</div>
+          <div><h3>Paloma Mas</h3><p><strong>Group Leader</strong></p><p>CSIC Research Professor · Centre for Research in Agricultural Genomics (CRAG)</p></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="contact" id="contact">
+      <div class="container contact-grid">
+        <div><div class="kicker" style="color:var(--lime)">Contact</div><h2>Centre for Research in Agricultural Genomics</h2><p>CRAG · Campus UAB<br>Bellaterra (Cerdanyola del Vallès)<br>Barcelona, Spain</p></div>
+        <div><p><strong>Institutional page</strong><br><a href="https://www.cragenomica.es/research-groups/molecular-mechanisms-circadian-clock-function" target="_blank" rel="noopener">Molecular mechanisms of circadian clock function ↗</a></p><p>Contact email and opportunities can be added here.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><div class="container">© <span id="year"></span> The Clock Lab · CRAG, Barcelona</div></footer>
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>
