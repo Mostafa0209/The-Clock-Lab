@@ -61,6 +61,13 @@
     .pub h3 { margin: 0 0 7px; font-family: Georgia, 'Times New Roman', serif; font-size: 1.28rem; line-height: 1.35; font-weight: 500; }
     .pub p { margin: 0; color: var(--muted); font-size: .94rem; }
     .pub a { color: var(--green); font-weight: 800; white-space: nowrap; }
+    .protocols { background: var(--cream); }
+    .protocol-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+    .protocol-card { display: flex; flex-direction: column; min-height: 220px; padding: 30px; background: var(--paper); border-top: 4px solid var(--orange); }
+    .protocol-type { color: var(--green); text-transform: uppercase; letter-spacing: .12em; font-size: .72rem; font-weight: 800; }
+    .protocol-card h3 { margin: 25px 0 10px; font-family: Georgia, 'Times New Roman', serif; font-size: 1.45rem; line-height: 1.3; font-weight: 500; }
+    .protocol-card p { margin: 0 0 24px; color: var(--muted); }
+    .protocol-card a { margin-top: auto; color: var(--green); font-weight: 800; }
     .people { background: #e8f0e9; }
     .person { display: grid; grid-template-columns: 170px 1fr; gap: 35px; align-items: center; max-width: 760px; }
     .portrait-placeholder { display: grid; place-items: center; width: 170px; aspect-ratio: 1; background: var(--green); color: white; border-radius: 50%; font-family: Georgia, serif; font-size: 2.8rem; }
@@ -78,6 +85,7 @@
       .hero-grid { min-height: auto; gap: 25px; }
       .clock-art { width: 230px; }
       .cards { grid-template-columns: 1fr; }
+      .protocol-grid { grid-template-columns: 1fr; }
       .pub { grid-template-columns: 65px 1fr; }
       .pub a { grid-column: 2; }
       .person { grid-template-columns: 1fr; }
@@ -92,6 +100,7 @@
         <a href="#about">About</a>
         <a href="#research">Research</a>
         <a href="#publications">Publications</a>
+        <a href="#protocols">Protocols</a>
         <a href="#people">People</a>
         <a href="#contact">Contact</a>
       </div>
@@ -139,8 +148,13 @@
       <div class="container">
         <div class="section-head">
           <div><div class="kicker">Selected work</div><h2>Publications</h2></div>
-          <p class="lead">Recent and representative research from the group. A complete, filterable publication list can be added next.</p>
+          <p class="lead">Recent and representative research from the group, spanning circadian mechanisms, transcription, development and inter-organ communication.</p>
         </div>
+        <article class="pub">
+          <div class="year">2026</div>
+          <div><h3>A circadian rheostat drives proton electrochemical gradients to optimize cell-type-specific growth in <em>Arabidopsis</em></h3><p>Xiong L., Seki M., Satake A. &amp; Mas P. · <em>Cell</em> 189(6): 1785–1801.e13</p></div>
+          <a href="https://doi.org/10.1016/j.cell.2025.12.056" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
         <article class="pub">
           <div class="year">2025</div>
           <div><h3>Gene editing of clock components in <em>Solanum lycopersicum</em>: Effects on gene expression, development, and productivity</h3><p>Alary B., Mortada M. &amp; Mas P. · <em>The Plant Journal</em> 123: e70383</p></div>
@@ -153,9 +167,89 @@
         </article>
         <article class="pub">
           <div class="year">2022</div>
-          <div><h3>Circadian autonomy and rhythmic precision of the Arabidopsis female reproductive organ</h3><p>Okada M., Yang Z. &amp; Mas P. · <em>Developmental Cell</em></p></div>
-          <a href="https://www.sciencedirect.com/science/article/pii/S1534580722005998" target="_blank" rel="noopener">View paper ↗</a>
+          <div><h3>Circadian autonomy and rhythmic precision of the <em>Arabidopsis</em> female reproductive organ</h3><p>Okada M., Yang Z. &amp; Mas P. · <em>Developmental Cell</em> 57(18): 2168–2180.e4</p></div>
+          <a href="https://doi.org/10.1016/j.devcel.2022.08.013" target="_blank" rel="noopener">View paper ↗</a>
         </article>
+        <article class="pub">
+          <div class="year">2020</div>
+          <div><h3>A mobile ELF4 delivers circadian temperature information from shoots to roots</h3><p>Chen W.W., Takahashi N., Hirata Y., Ronald J., Porco S., Davis S.J., Nusinow D.A., Kay S.A. &amp; Mas P. · <em>Nature Plants</em> 6(4): 416–426</p></div>
+          <a href="https://doi.org/10.1038/s41477-020-0634-2" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2018</div>
+          <div><h3>The circadian clock sets the time of DNA replication licensing to regulate growth in <em>Arabidopsis</em></h3><p>Fung-Uceda J., Lee K., Seo P.J., Polyn S., De Veylder L. &amp; Mas P. · <em>Developmental Cell</em> 45(1): 101–113.e4</p></div>
+          <a href="https://doi.org/10.1016/j.devcel.2018.02.022" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2018</div>
+          <div><h3>Targeted recruitment of the basal transcriptional machinery by LNK clock components controls the circadian rhythms of nascent RNAs in <em>Arabidopsis</em></h3><p>Ma Y., Gil S., Grasser K.D. &amp; Mas P. · <em>The Plant Cell</em> 30(4): 907–924</p></div>
+          <a href="https://doi.org/10.1105/tpc.18.00052" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2015</div>
+          <div><h3>A hierarchical multi-oscillator network orchestrates the <em>Arabidopsis</em> circadian system</h3><p>Takahashi N., Hirata Y., Aihara K. &amp; Mas P. · <em>Cell</em> 163(1): 148–159</p></div>
+          <a href="https://doi.org/10.1016/j.cell.2015.08.062" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2015</div>
+          <div><h3>Time-dependent sequestration of RVE8 by LNK proteins shapes the diurnal oscillation of anthocyanin biosynthesis</h3><p>Pérez-García P., Ma Y., Yanovsky M.J. &amp; Mas P. · <em>Proceedings of the National Academy of Sciences USA</em> 112(16): 5249–5253</p></div>
+          <a href="https://doi.org/10.1073/pnas.1420792112" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2012</div>
+          <div><h3>Mapping the core of the <em>Arabidopsis</em> circadian clock defines the network structure of the oscillator</h3><p>Huang W., Pérez-García P., Pokhilko A., Millar A.J., Antoshechkin I., Riechmann J.L. &amp; Mas P. · <em>Science</em> 336(6077): 75–79</p></div>
+          <a href="https://doi.org/10.1126/science.1219075" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2012</div>
+          <div><h3>Ordered changes in histone modifications at the core of the <em>Arabidopsis</em> circadian clock</h3><p>Malapeira J., Khaitova L.C. &amp; Mas P. · <em>Proceedings of the National Academy of Sciences USA</em> 109(52): 21540–21545</p></div>
+          <a href="https://doi.org/10.1073/pnas.1217022110" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2010</div>
+          <div><h3>A methyl transferase links the circadian clock to the regulation of alternative splicing</h3><p>Sanchez S.E., Petrillo E., Beckwith E.J., Zhang X., Rugnone M.L., Hernando C.E., Cuevas J.C., Godoy Herz M.A., Depetris-Chauvin A., Simpson C.G., Brown J.W.S., Cerdán P.D., Borevitz J.O., Mas P., Ceriani M.F., Kornblihtt A.R. &amp; Yanovsky M.J. · <em>Nature</em> 468(7320): 112–116</p></div>
+          <a href="https://doi.org/10.1038/nature09470" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+        <article class="pub">
+          <div class="year">2010</div>
+          <div><h3>The functional interplay between protein kinase CK2 and CCA1 transcriptional activity is essential for clock temperature compensation in <em>Arabidopsis</em></h3><p>Portolés S. &amp; Más P. · <em>PLoS Genetics</em> 6(11): e1001201</p></div>
+          <a href="https://doi.org/10.1371/journal.pgen.1001201" target="_blank" rel="noopener">View paper ↗</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="protocols" id="protocols">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">Lab resources</div><h2>Protocols</h2></div>
+          <p class="lead">Frequently used laboratory protocols and manufacturers’ instructions, organized for quick access by lab members.</p>
+        </div>
+        <div class="protocol-grid">
+          <article class="protocol-card">
+            <div class="protocol-type">Chromatin accessibility</div>
+            <h3>ATAC-seq protocol</h3>
+            <p>Laboratory workflow for preparing ATAC-seq samples.</p>
+            <a href="protocols/ATAC_Protocol.pdf" target="_blank" rel="noopener">Open PDF ↗</a>
+          </article>
+          <article class="protocol-card">
+            <div class="protocol-type">RNA extraction</div>
+            <h3>Maxwell RSC Plant RNA Kit</h3>
+            <p>Technical manual TM459 for automated plant RNA purification.</p>
+            <a href="protocols/Maxwell_RSC_Plant_RNA_Kit_TM459.pdf" target="_blank" rel="noopener">Open PDF ↗</a>
+          </article>
+          <article class="protocol-card">
+            <div class="protocol-type">Plasmid preparation</div>
+            <h3>NZY Plasmid Isolation</h3>
+            <p>Instructions for plasmid DNA isolation and purification.</p>
+            <a href="protocols/NZY_Plasmid_Isolation.pdf" target="_blank" rel="noopener">Open PDF ↗</a>
+          </article>
+          <article class="protocol-card">
+            <div class="protocol-type">RNA extraction</div>
+            <h3>RNeasy Plant Mini Kit</h3>
+            <p>Manufacturer’s handbook for purification of total RNA from plant material.</p>
+            <a href="protocols/RNeasy_Plant_Mini_Kit.pdf" target="_blank" rel="noopener">Open PDF ↗</a>
+          </article>
+        </div>
       </div>
     </section>
 
