@@ -54,6 +54,13 @@
     .card .number { color: var(--orange); font-size: .82rem; font-weight: 800; }
     .card h3 { margin: 32px 0 10px; font-family: Georgia, 'Times New Roman', serif; font-size: 1.55rem; font-weight: 500; }
     .card p { color: var(--muted); margin: 0; }
+    .tools { color: white; background: var(--ink); }
+    .tools .kicker { color: var(--lime); }
+    .tools .lead { color: #c9d9d1; }
+    .tool-panel { display: grid; grid-template-columns: 1fr auto; gap: 35px; align-items: center; padding: 34px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.055); }
+    .tool-panel h3 { margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif; font-size: 1.7rem; font-weight: 500; }
+    .tool-panel p { max-width: 760px; margin: 0; color: #c9d9d1; }
+    .tool-link { display: inline-block; padding: 13px 19px; color: var(--ink); background: var(--lime); text-decoration: none; font-weight: 800; border-radius: 3px; white-space: nowrap; }
     .publications { background: var(--paper); }
     .pub { display: grid; grid-template-columns: 100px 1fr auto; gap: 25px; padding: 28px 0; border-top: 1px solid var(--line); align-items: start; }
     .pub:last-child { border-bottom: 1px solid var(--line); }
@@ -85,6 +92,7 @@
       .hero-grid { min-height: auto; gap: 25px; }
       .clock-art { width: 230px; }
       .cards { grid-template-columns: 1fr; }
+      .tool-panel { grid-template-columns: 1fr; }
       .protocol-grid { grid-template-columns: 1fr; }
       .pub { grid-template-columns: 65px 1fr; }
       .pub a { grid-column: 2; }
@@ -99,6 +107,7 @@
       <div class="nav-links">
         <a href="#about">About</a>
         <a href="#research">Research</a>
+        <a href="rhythmicity.html">Rhythmicity</a>
         <a href="#publications">Publications</a>
         <a href="#protocols">Protocols</a>
         <a href="#people">People</a>
@@ -141,6 +150,22 @@
           <article class="card"><div class="number">02</div><h3>Chromatin &amp; transcription</h3><p>Studying how chromatin state, transcription and genome regulation change across the day–night cycle.</p></article>
           <article class="card"><div class="number">03</div><h3>Communication &amp; growth</h3><p>Exploring how clocks communicate across cells, tissues and organs to coordinate development and crop performance.</p></article>
         </div>
+      </div>
+    </section>
+
+    <section class="tools" id="tools">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">Interactive resource</div><h2>Explore rhythmicity</h2></div>
+          <p class="lead">See how a 24-hour harmonic model estimates amplitude and phase, tests rhythmicity against a flat model, and applies Benjamini–Hochberg correction across many accessible chromatin regions.</p>
+        </div>
+        <article class="tool-panel">
+          <div>
+            <h3>24-hour Harmonic Regression &amp; FDR Explorer</h3>
+            <p>Adjust phase components, noise and replicate number; compare rhythmic and non-rhythmic plant ACR profiles; and inspect how raw p-values change after multiple-testing correction.</p>
+          </div>
+          <a class="tool-link" href="rhythmicity.html">Open explorer ↗</a>
+        </article>
       </div>
     </section>
 
