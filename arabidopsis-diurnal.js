@@ -182,18 +182,24 @@
     if (!state.loaded) return showError('The dataset is still loading.');
     const requested = splitGeneInput(geneInput.value);
     if (!requested.length) return showError('Enter at least one AGI gene identifier.');
+    const selectedSet = new Set(state.selected);
     const missing = requested.filter((gene) => !state.linesByGene.has(gene));
-    const found = requested.filter((gene) => state.linesByGene.has(gene) && !state.selected.includes(gene));
-    const remaining = 500 - state.selected.length;
-    state.selected.push(...found.slice(0, remaining));
-    if (found.length > remaining) showError(`${found.length - remaining} genes were not added because the maximum is 500.`);
-    else if (missing.length) showError(`Not found in this condition: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ` and ${missing.length - 12} more` : ''}.`);
+    const found = requested.filter((gene) => state.linesByGene.has(gene) && !selectedSet.has(gene));
+    state.selected.push(...found);
+    if (missing.length) showError(`Not found in this condition: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ` and ${missing.length - 12} more` : ''}.`);
     geneInput.value = '';
     renderAll();
   }
 
   function removeGene(gene) {
     state.selected = state.selected.filter((item) => item !== gene);
+    renderAll();
+  }
+
+  function addAllGenes() {
+    clearError();
+    if (!state.loaded) return showError('The dataset is still loading.');
+    state.selected = [...state.geneIds];
     renderAll();
   }
 
@@ -275,7 +281,7 @@
         if (!Number.isFinite(point.plotMean)) { started = false; return; }
         if (!started) { ctx.moveTo(x(point.time + timeOffset), y(point.plotMean)); started = true; } else ctx.lineTo(x(point.time + timeOffset), y(point.plotMean));
       });
-      ctx.strokeStyle = color; ctx.lineWidth = series.length > 100 ? 1 : 2; ctx.globalAlpha = series.length > 100 ? .55 : .9; ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = color; ctx.lineWidth = series.length > 1000 ? .5 : series.length > 100 ? 1 : 2; ctx.globalAlpha = series.length > 1000 ? .18 : series.length > 100 ? .55 : .9; ctx.stroke(); ctx.globalAlpha = 1;
     });
   }
 
@@ -297,12 +303,13 @@
   function renderResults() {
     const body = el('resultsBody');
     if (!state.selected.length) { body.innerHTML = '<tr><td colspan="5">No genes selected.</td></tr>'; return; }
-    body.innerHTML = state.selected.map((gene) => {
+    const previewLimit = 1000;
+    body.innerHTML = state.selected.slice(0, previewLimit).map((gene) => {
       const data = getGeneData(gene);
       const phase = state.condition.phaseByGene?.[gene];
       const storedPeak = data.peakTime == null ? null : data.peakTime + (state.condition.timeOffset || 0);
       return `<tr><td><strong>${gene}</strong></td><td>${storedPeak == null ? '—' : `${storedPeak} h`}</td><td>${phase == null ? 'Not supplied' : `ZT${phase}`}</td><td class="number">${data.maxMean == null ? '—' : data.maxMean.toFixed(3)}</td><td class="number">${data.available}/${data.total}</td></tr>`;
-    }).join('');
+    }).join('') + (state.selected.length > previewLimit ? `<tr><td colspan="5"><strong>${(state.selected.length - previewLimit).toLocaleString()} additional genes</strong> are included in the graph and download but omitted from this table preview.</td></tr>` : '');
   }
 
   function renderAll() {
@@ -330,6 +337,7 @@
   dataTypeSelect.addEventListener('change', () => { state.parsedGenes.clear(); renderAll(); });
   displayScaleSelect.addEventListener('change', renderAll);
   el('addGenes').addEventListener('click', addGenes);
+  el('addAllGenes').addEventListener('click', addAllGenes);
   el('clearGenes').addEventListener('click', () => { state.selected = []; clearError(); renderAll(); });
   el('download').addEventListener('click', downloadSelected);
   geneInput.addEventListener('keydown', (event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addGenes(); });
