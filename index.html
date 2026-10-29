@@ -61,6 +61,7 @@
     .tool-panel h3 { margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif; font-size: 1.7rem; font-weight: 500; }
     .tool-panel p { max-width: 760px; margin: 0; color: #c9d9d1; }
     .tool-link { display: inline-block; padding: 13px 19px; color: var(--ink); background: var(--lime); text-decoration: none; font-weight: 800; border-radius: 3px; white-space: nowrap; }
+    .tool-panel + .tool-panel { margin-top: 18px; }
     .publications { background: var(--paper); }
     .pub { display: grid; grid-template-columns: 100px 1fr auto; gap: 25px; padding: 28px 0; border-top: 1px solid var(--line); align-items: start; }
     .pub:last-child { border-bottom: 1px solid var(--line); }
@@ -108,6 +109,7 @@
         <a href="#about">About</a>
         <a href="#research">Research</a>
         <a href="rhythmicity.html">Rhythmicity</a>
+        <a href="arabidopsis-diurnal.html">Arabidopsis Diurnal</a>
         <a href="#publications">Publications</a>
         <a href="#protocols">Protocols</a>
         <a href="#people">People</a>
@@ -165,6 +167,13 @@
             <p>Analyse replicated Excel time courses, obtain q-values and peak phases for every ID, download the results, or explore how noise and replicate number affect rhythmicity calls.</p>
           </div>
           <a class="tool-link" href="rhythmicity.html">Open explorer ↗</a>
+        </article>
+        <article class="tool-panel">
+          <div>
+            <h3>Arabidopsis Diurnal Expression Explorer</h3>
+            <p>Search up to 500 Arabidopsis gene IDs, compare their expression across a 12-hour-light/12-hour-dark time course, inspect observed peak times, and download the selected expression data.</p>
+          </div>
+          <a class="tool-link" href="arabidopsis-diurnal.html">Open expression atlas ↗</a>
         </article>
       </div>
     </section>
