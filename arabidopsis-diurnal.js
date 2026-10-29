@@ -35,6 +35,8 @@
     sampleGroups: {},
     selected: [],
     parsedGenes: new Map(),
+    rhythmCache: new Map(),
+    modelLibraries: new Map(),
     loaded: false
   };
 
@@ -42,6 +44,9 @@
   const conditionSelect = el('condition');
   const dataTypeSelect = el('dataType');
   const displayScaleSelect = el('displayScale');
+  const correlationCutoffInput = el('correlationCutoff');
+  const foldCutoffInput = el('foldCutoff');
+  const backgroundCutoffInput = el('backgroundCutoff');
   const geneInput = el('geneInput');
   const errorBox = el('error');
   const canvas = el('chart');
@@ -97,6 +102,8 @@
     state.condition = condition;
     state.selected = [];
     state.parsedGenes.clear();
+    state.rhythmCache.clear();
+    state.modelLibraries.clear();
     state.linesByGene.clear();
     el('loading').style.display = 'grid';
     el('loadingText').textContent = `Reading ${condition.id}…`;
@@ -161,6 +168,81 @@
     const result = { gene, type, points, peakTime: peak?.time ?? null, maxMean: peak?.mean ?? null, available: samples.filter((sample) => values[sample.index] !== '').length, total: samples.length };
     state.parsedGenes.set(cacheKey, result);
     return result;
+  }
+
+  function circularDistance(a, b) {
+    const distance = Math.abs(a - b) % 24;
+    return Math.min(distance, 24 - distance);
+  }
+
+  function pearsonCorrelation(values, model) {
+    const pairs = values.map((value, index) => [value, model[index]]).filter(([value, expected]) => Number.isFinite(value) && Number.isFinite(expected));
+    if (pairs.length < 3) return null;
+    const meanX = pairs.reduce((sum, pair) => sum + pair[0], 0) / pairs.length;
+    const meanY = pairs.reduce((sum, pair) => sum + pair[1], 0) / pairs.length;
+    let numerator = 0, sumX = 0, sumY = 0;
+    pairs.forEach(([value, expected]) => {
+      const dx = value - meanX, dy = expected - meanY;
+      numerator += dx * dy; sumX += dx * dx; sumY += dy * dy;
+    });
+    const denominator = Math.sqrt(sumX * sumY);
+    return denominator > 0 ? numerator / denominator : null;
+  }
+
+  function modelValue(model, zt, phase) {
+    const distance = circularDistance(zt, phase);
+    if (model === 'Cosine') return (Math.cos((2 * Math.PI * distance) / 24) + 1) / 2;
+    if (model === 'Spike') return Math.exp(-0.5 * Math.pow(distance / 1.5, 2));
+    if (model === 'Rigid') return Math.max(0, 1 - distance / 6);
+    if (model === 'Narrow box') return distance <= 2 ? 1 : 0;
+    return distance <= 4 ? 1 : 0;
+  }
+
+  function getModelLibrary(ztTimes) {
+    const key = ztTimes.join(',');
+    if (state.modelLibraries.has(key)) return state.modelLibraries.get(key);
+    const library = [];
+    ['Cosine', 'Spike', 'Rigid', 'Narrow box', 'Wide box'].forEach((model) => {
+      for (let phase = 0; phase < 24; phase++) library.push({ model, phase, values: ztTimes.map((zt) => modelValue(model, zt, phase)) });
+    });
+    state.modelLibraries.set(key, library);
+    return library;
+  }
+
+  function getRhythmAnalysis(gene) {
+    const type = dataTypeSelect.value;
+    const cacheKey = `${gene}|${type}`;
+    if (state.rhythmCache.has(cacheKey)) return state.rhythmCache.get(cacheKey);
+    const data = getGeneData(gene);
+    const validPoints = data.points.filter((point) => Number.isFinite(point.mean));
+    const values = validPoints.map((point) => point.mean);
+    const ztTimes = validPoints.map((point) => (point.time + 12) % 24);
+    let best = { phase: null, correlation: null, model: '—' };
+    getModelLibrary(ztTimes).forEach((candidate) => {
+      const correlation = pearsonCorrelation(values, candidate.values);
+      if (correlation != null && (best.correlation == null || correlation > best.correlation)) best = { phase: candidate.phase, correlation, model: candidate.model };
+    });
+    const minimum = values.length ? Math.min(...values) : null;
+    const maximum = values.length ? Math.max(...values) : null;
+    const foldChange = minimum == null || maximum == null ? null : minimum > 0 ? maximum / minimum : maximum > 0 ? Infinity : 1;
+    const result = { ...best, minimum, maximum, foldChange };
+    state.rhythmCache.set(cacheKey, result);
+    return result;
+  }
+
+  function screenCutoffs() {
+    const correlation = Number(correlationCutoffInput.value);
+    const fold = Number(foldCutoffInput.value);
+    const background = Number(backgroundCutoffInput.value);
+    return {
+      correlation: Number.isFinite(correlation) ? Math.min(1, Math.max(0, correlation)) : 0.8,
+      fold: Number.isFinite(fold) ? Math.max(1, fold) : 2,
+      background: Number.isFinite(background) ? Math.max(0, background) : 0.01
+    };
+  }
+
+  function isOscillating(analysis, cutoffs = screenCutoffs()) {
+    return analysis.correlation != null && analysis.correlation >= cutoffs.correlation && analysis.foldChange != null && analysis.foldChange >= cutoffs.fold && analysis.maximum != null && analysis.maximum >= cutoffs.background;
   }
 
   function splitGeneInput(text) {
@@ -302,14 +384,30 @@
 
   function renderResults() {
     const body = el('resultsBody');
-    if (!state.selected.length) { body.innerHTML = '<tr><td colspan="5">No genes selected.</td></tr>'; return; }
+    const head = el('resultsHead');
+    const timeOffset = state.condition.timeOffset || 0;
+    const samples = state.sampleGroups[dataTypeSelect.value] || [];
+    const sourceTimes = [...new Set(samples.map((sample) => sample.time))].sort((a, b) => a - b);
+    const displayTimes = sourceTimes.map((time) => time + timeOffset);
+    head.innerHTML = `<tr><th>GeneID</th><th>Condition</th><th>Oscillating?</th><th>Phase (ZT)</th><th>Correlation</th><th>Best model</th><th>Fold</th>${displayTimes.map((time) => `<th>${time}</th>`).join('')}</tr>`;
+    if (!state.selected.length) {
+      body.innerHTML = `<tr><td colspan="${7 + displayTimes.length}">No genes selected.</td></tr>`;
+      el('rhythmSummary').textContent = 'Select genes to calculate their best-fitting 24-hour phase and Pearson correlation.';
+      return;
+    }
     const previewLimit = 1000;
+    const cutoffs = screenCutoffs();
+    let oscillatingCount = 0;
     body.innerHTML = state.selected.slice(0, previewLimit).map((gene) => {
       const data = getGeneData(gene);
-      const phase = state.condition.phaseByGene?.[gene];
-      const storedPeak = data.peakTime == null ? null : data.peakTime + (state.condition.timeOffset || 0);
-      return `<tr><td><strong>${gene}</strong></td><td>${storedPeak == null ? '—' : `${storedPeak} h`}</td><td>${phase == null ? 'Not supplied' : `ZT${phase}`}</td><td class="number">${data.maxMean == null ? '—' : data.maxMean.toFixed(3)}</td><td class="number">${data.available}/${data.total}</td></tr>`;
-    }).join('') + (state.selected.length > previewLimit ? `<tr><td colspan="5"><strong>${(state.selected.length - previewLimit).toLocaleString()} additional genes</strong> are included in the graph and download but omitted from this table preview.</td></tr>` : '');
+      const analysis = getRhythmAnalysis(gene);
+      const oscillating = isOscillating(analysis, cutoffs);
+      if (oscillating) oscillatingCount++;
+      const meanByTime = new Map(data.points.map((point) => [point.time, point.mean]));
+      return `<tr><td><strong>${gene}</strong></td><td>${state.condition.id}</td><td><span class="call ${oscillating ? 'yes' : 'no'}">${oscillating ? 'Yes' : 'No'}</span></td><td class="number">${analysis.phase == null ? '—' : analysis.phase}</td><td class="number">${analysis.correlation == null ? '—' : analysis.correlation.toFixed(6)}</td><td>${analysis.model}</td><td class="number">${analysis.foldChange == null ? '—' : Number.isFinite(analysis.foldChange) ? analysis.foldChange.toFixed(3) : '∞'}</td>${sourceTimes.map((time) => `<td class="number">${Number.isFinite(meanByTime.get(time)) ? meanByTime.get(time).toFixed(4) : ''}</td>`).join('')}</tr>`;
+    }).join('') + (state.selected.length > previewLimit ? `<tr><td colspan="${7 + displayTimes.length}"><strong>${(state.selected.length - previewLimit).toLocaleString()} additional genes</strong> are included in the graph and wide CSV download but omitted from this table preview.</td></tr>` : '');
+    const previewed = Math.min(state.selected.length, previewLimit);
+    el('rhythmSummary').textContent = `${oscillatingCount.toLocaleString()} of ${previewed.toLocaleString()} displayed genes pass correlation ≥ ${cutoffs.correlation.toFixed(2)}, fold ≥ ${cutoffs.fold.toFixed(1)}, and maximum expression ≥ ${cutoffs.background}. ${state.selected.length > previewLimit ? 'The summary covers the 1,000-row preview; the download evaluates every selected gene.' : ''}`;
   }
 
   function renderAll() {
@@ -321,21 +419,29 @@
 
   function downloadSelected() {
     if (!state.selected.length) return;
-    const rows = [['Condition', 'Gene', 'CSV_time_h', 'Stored_plot_coordinate_h', 'Replicate', 'Value', 'Data_type', 'Source_column']];
+    const timeOffset = state.condition.timeOffset || 0;
+    const samples = state.sampleGroups[dataTypeSelect.value] || [];
+    const sourceTimes = [...new Set(samples.map((sample) => sample.time))].sort((a, b) => a - b);
+    const displayTimes = sourceTimes.map((time) => time + timeOffset);
+    const cutoffs = screenCutoffs();
+    const rows = [['GeneID', 'Condition', 'Oscillating_screen', 'Phase_ZT', 'Correlation', 'Best_model', 'Fold_change', ...displayTimes.map((time) => `${time}h_mean`)]];
     state.selected.forEach((gene) => {
       const data = getGeneData(gene);
-      data.points.forEach((point) => point.replicates.forEach((replicate) => rows.push([state.condition.id, gene, point.time, point.time + (state.condition.timeOffset || 0), replicate.replicate, replicate.value ?? '', data.type, replicate.sourceColumn])));
+      const analysis = getRhythmAnalysis(gene);
+      const meanByTime = new Map(data.points.map((point) => [point.time, point.mean]));
+      rows.push([gene, state.condition.id, isOscillating(analysis, cutoffs) ? 'Yes' : 'No', analysis.phase ?? '', analysis.correlation == null ? '' : analysis.correlation.toFixed(6), analysis.model, analysis.foldChange == null ? '' : Number.isFinite(analysis.foldChange) ? analysis.foldChange.toFixed(6) : 'Infinity', ...sourceTimes.map((time) => Number.isFinite(meanByTime.get(time)) ? meanByTime.get(time).toFixed(6) : '')]);
     });
     const escape = (value) => { const text = String(value ?? ''); return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; };
     const blob = new Blob([rows.map((row) => row.map(escape).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const anchor = document.createElement('a');
-    anchor.href = url; anchor.download = `${state.condition.id}_${dataTypeSelect.value}_${state.selected.length}_genes.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+    anchor.href = url; anchor.download = `${state.condition.id}_${dataTypeSelect.value}_${state.selected.length}_genes_phase_correlation.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
   }
 
   CONDITIONS.forEach((condition) => conditionSelect.add(new Option(condition.label, condition.id)));
   conditionSelect.addEventListener('change', () => loadCondition(conditionSelect.value));
-  dataTypeSelect.addEventListener('change', () => { state.parsedGenes.clear(); renderAll(); });
+  dataTypeSelect.addEventListener('change', () => { state.parsedGenes.clear(); state.rhythmCache.clear(); renderAll(); });
   displayScaleSelect.addEventListener('change', renderAll);
+  [correlationCutoffInput, foldCutoffInput, backgroundCutoffInput].forEach((input) => input.addEventListener('change', renderResults));
   el('addGenes').addEventListener('click', addGenes);
   el('addAllGenes').addEventListener('click', addAllGenes);
   el('clearGenes').addEventListener('click', () => { state.selected = []; clearError(); renderAll(); });
