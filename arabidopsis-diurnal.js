@@ -13,10 +13,15 @@
       tissue: 'Leaves',
       temperature: '20°C',
       photoperiod: '12 h light / 12 h dark',
-      duration: 24,
+      // The CSV labels run from 00h to 24h, but GEAR plots this experiment on
+      // stored coordinates 12h to 36h. Thus CSV 00h is dusk (stored 12h),
+      // CSV 12h is dawn (stored 24h), and CSV 24h is the next dusk (stored 36h).
+      timeOffset: 12,
+      plotStart: 12,
+      plotEnd: 36,
       lightBands: [
-        { start: 0, end: 12, type: 'light' },
-        { start: 12, end: 24, type: 'dark' }
+        { start: 12, end: 24, type: 'dark' },
+        { start: 24, end: 36, type: 'light' }
       ],
       phaseByGene: null
     }
@@ -125,7 +130,7 @@
   function renderConditionMeta() {
     const c = state.condition;
     el('conditionMeta').innerHTML = [
-      ['Condition', c.id], ['Material', `${c.ecotype} · ${c.tissue}`], ['Environment', `${c.photoperiod} · ${c.temperature}`], ['Database phase', c.phaseByGene ? 'Available' : 'Not supplied']
+      ['Condition', c.id], ['Material', `${c.ecotype} · ${c.tissue}`], ['Environment', `${c.photoperiod} · ${c.temperature}`], ['Time axis', `${c.plotStart}–${c.plotEnd} h · source coordinate`]
     ].map(([label, value]) => `<div class="meta"><span>${label}</span><strong>${value}</strong></div>`).join('');
     el('lightBadge').textContent = c.photoperiod;
   }
@@ -221,7 +226,9 @@
 
     const margin = { left: 67, right: 24, top: 24, bottom: 58 };
     const plotW = width - margin.left - margin.right, plotH = height - margin.top - margin.bottom;
-    const duration = state.condition.duration;
+    const plotStart = state.condition.plotStart;
+    const plotEnd = state.condition.plotEnd;
+    const timeOffset = state.condition.timeOffset || 0;
     const series = state.selected.map(getGeneData).filter(Boolean).map((data) => ({ data, points: transformedSeries(data, displayScaleSelect.value) }));
     const allValues = series.flatMap((item) => item.points.flatMap((point) => [point.plotMean, ...point.plotReplicates])).filter(Number.isFinite);
     let minY = displayScaleSelect.value === 'rescaled' || !allValues.length ? 0 : Math.min(...allValues);
@@ -231,7 +238,7 @@
     const yPad = displayScaleSelect.value === 'rescaled' ? 0 : (maxY - minY) * 0.08;
     maxY += yPad;
     if (minY < 0) minY -= yPad;
-    const x = (time) => margin.left + (time / duration) * plotW;
+    const x = (time) => margin.left + ((time - plotStart) / (plotEnd - plotStart)) * plotW;
     const y = (value) => margin.top + ((maxY - value) / (maxY - minY)) * plotH;
 
     state.condition.lightBands.forEach((band) => {
@@ -245,15 +252,15 @@
       ctx.beginPath(); ctx.moveTo(margin.left, py); ctx.lineTo(width - margin.right, py); ctx.stroke();
       ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(value >= 100 ? value.toFixed(0) : value.toFixed(2), margin.left - 9, py);
     }
-    const times = [...new Set(series.flatMap((item) => item.points.map((point) => point.time)))].sort((a, b) => a - b);
+    const times = [...new Set(series.flatMap((item) => item.points.map((point) => point.time + timeOffset)))].sort((a, b) => a - b);
     times.forEach((time) => {
       const px = x(time); ctx.strokeStyle = time === 12 ? '#87938d' : '#e1e6e1';
       ctx.beginPath(); ctx.moveTo(px, margin.top); ctx.lineTo(px, height - margin.bottom); ctx.stroke();
-      ctx.fillStyle = '#61736c'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(`ZT${time}`, px, height - margin.bottom + 9);
+      ctx.fillStyle = '#61736c'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(`${time}`, px, height - margin.bottom + 9);
     });
     ctx.fillStyle = '#16352c'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('LIGHT', x(6), margin.top + 16); ctx.fillText('DARK', x(18), margin.top + 16);
-    ctx.fillStyle = '#61736c'; ctx.font = '12px Arial'; ctx.fillText('Zeitgeber time (hours)', margin.left + plotW / 2, height - 12);
+    state.condition.lightBands.forEach((band) => ctx.fillText(band.type.toUpperCase(), x((band.start + band.end) / 2), margin.top + 16));
+    ctx.fillStyle = '#61736c'; ctx.font = '12px Arial'; ctx.fillText('Stored plot coordinate (hours)', margin.left + plotW / 2, height - 12);
     ctx.save(); ctx.translate(15, margin.top + plotH / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(displayScaleSelect.value === 'rescaled' ? 'Per-gene rescaled expression (0–1)' : `${dataTypeSelect.value} expression`, 0, 0); ctx.restore();
 
     const showReplicates = series.length <= 60;
@@ -261,12 +268,12 @@
       const color = colorFor(index);
       if (showReplicates) item.points.forEach((point) => point.plotReplicates.forEach((value) => {
         if (!Number.isFinite(value)) return;
-        ctx.beginPath(); ctx.arc(x(point.time), y(value), 2.7, 0, Math.PI * 2); ctx.fillStyle = colorFor(index, .35); ctx.fill();
+        ctx.beginPath(); ctx.arc(x(point.time + timeOffset), y(value), 2.7, 0, Math.PI * 2); ctx.fillStyle = colorFor(index, .35); ctx.fill();
       }));
       ctx.beginPath(); let started = false;
       item.points.forEach((point) => {
         if (!Number.isFinite(point.plotMean)) { started = false; return; }
-        if (!started) { ctx.moveTo(x(point.time), y(point.plotMean)); started = true; } else ctx.lineTo(x(point.time), y(point.plotMean));
+        if (!started) { ctx.moveTo(x(point.time + timeOffset), y(point.plotMean)); started = true; } else ctx.lineTo(x(point.time + timeOffset), y(point.plotMean));
       });
       ctx.strokeStyle = color; ctx.lineWidth = series.length > 100 ? 1 : 2; ctx.globalAlpha = series.length > 100 ? .55 : .9; ctx.stroke(); ctx.globalAlpha = 1;
     });
@@ -293,7 +300,8 @@
     body.innerHTML = state.selected.map((gene) => {
       const data = getGeneData(gene);
       const phase = state.condition.phaseByGene?.[gene];
-      return `<tr><td><strong>${gene}</strong></td><td>ZT${data.peakTime ?? '—'}</td><td>${phase == null ? 'Not supplied' : `ZT${phase}`}</td><td class="number">${data.maxMean == null ? '—' : data.maxMean.toFixed(3)}</td><td class="number">${data.available}/${data.total}</td></tr>`;
+      const storedPeak = data.peakTime == null ? null : data.peakTime + (state.condition.timeOffset || 0);
+      return `<tr><td><strong>${gene}</strong></td><td>${storedPeak == null ? '—' : `${storedPeak} h`}</td><td>${phase == null ? 'Not supplied' : `ZT${phase}`}</td><td class="number">${data.maxMean == null ? '—' : data.maxMean.toFixed(3)}</td><td class="number">${data.available}/${data.total}</td></tr>`;
     }).join('');
   }
 
@@ -306,10 +314,10 @@
 
   function downloadSelected() {
     if (!state.selected.length) return;
-    const rows = [['Condition', 'Gene', 'Time_h', 'Replicate', 'Value', 'Data_type', 'Source_column']];
+    const rows = [['Condition', 'Gene', 'CSV_time_h', 'Stored_plot_coordinate_h', 'Replicate', 'Value', 'Data_type', 'Source_column']];
     state.selected.forEach((gene) => {
       const data = getGeneData(gene);
-      data.points.forEach((point) => point.replicates.forEach((replicate) => rows.push([state.condition.id, gene, point.time, replicate.replicate, replicate.value ?? '', data.type, replicate.sourceColumn])));
+      data.points.forEach((point) => point.replicates.forEach((replicate) => rows.push([state.condition.id, gene, point.time, point.time + (state.condition.timeOffset || 0), replicate.replicate, replicate.value ?? '', data.type, replicate.sourceColumn])));
     });
     const escape = (value) => { const text = String(value ?? ''); return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; };
     const blob = new Blob([rows.map((row) => row.map(escape).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
