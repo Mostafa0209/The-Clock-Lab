@@ -7,6 +7,7 @@
     {
       id: 'GEAR-ID001',
       label: 'GEAR-ID001 · Smith 2004 · Col-0 leaves · 12L:12D',
+      source: 'built-in',
       csv: 'data/arabidopsis/GEAR-ID001-release-16-combined.csv',
       organism: 'Arabidopsis thaliana',
       ecotype: 'Col-0',
@@ -17,8 +18,10 @@
       // stored coordinates 12h to 36h. Thus CSV 00h is dusk (stored 12h),
       // CSV 12h is dawn (stored 24h), and CSV 24h is the next dusk (stored 36h).
       timeOffset: 12,
+      ztOffset: 12,
       plotStart: 12,
       plotEnd: 36,
+      axisLabel: 'Stored plot coordinate (hours)',
       lightBands: [
         { start: 12, end: 24, type: 'dark' },
         { start: 24, end: 36, type: 'light' }
@@ -37,6 +40,8 @@
     parsedGenes: new Map(),
     rhythmCache: new Map(),
     modelLibraries: new Map(),
+    uploadedConditions: new Map(),
+    importedRows: null,
     loaded: false
   };
 
@@ -47,12 +52,13 @@
   const correlationCutoffInput = el('correlationCutoff');
   const foldCutoffInput = el('foldCutoff');
   const backgroundCutoffInput = el('backgroundCutoff');
+  const diurnalFileInput = el('diurnalFile');
   const geneInput = el('geneInput');
   const errorBox = el('error');
   const canvas = el('chart');
   const ctx = canvas.getContext('2d');
 
-  function parseCSVLine(line) {
+  function parseCSVLine(line, delimiter = ',') {
     const values = [];
     let value = '';
     let quoted = false;
@@ -61,13 +67,218 @@
       if (char === '"') {
         if (quoted && line[i + 1] === '"') { value += '"'; i++; }
         else quoted = !quoted;
-      } else if (char === ',' && !quoted) {
+      } else if (char === delimiter && !quoted) {
         values.push(value);
         value = '';
       } else value += char;
     }
     values.push(value);
     return values;
+  }
+
+  function escapeHTML(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+  }
+
+  function normaliseHeader(value) {
+    return String(value ?? '').replace(/^\uFEFF/, '').trim();
+  }
+
+  function headerKey(value) {
+    return normaliseHeader(value).toLowerCase().replace(/[\s_-]+/g, '');
+  }
+
+  function timeFromHeader(value) {
+    const match = normaliseHeader(value).match(/^(?:zt)?(-?\d+(?:\.\d+)?)(?:h)?$/i);
+    return match ? Number(match[1]) : null;
+  }
+
+  function rowsFromMatrix(matrix) {
+    const headerIndex = matrix.findIndex((row) => row.filter((value) => normaliseHeader(value) !== '').length >= 2);
+    if (headerIndex < 0) return [];
+    const headers = matrix[headerIndex].map(normaliseHeader);
+    return matrix.slice(headerIndex + 1).filter((row) => row.some((value) => normaliseHeader(value) !== '')).map((row) => {
+      const record = {};
+      headers.forEach((header, index) => { if (header) record[header] = row[index] ?? ''; });
+      return record;
+    });
+  }
+
+  function parseDelimitedText(text, delimiter) {
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim() !== '');
+    return rowsFromMatrix(lines.map((line) => parseCSVLine(line, delimiter)));
+  }
+
+  function xmlDocument(text) {
+    const documentXML = new DOMParser().parseFromString(text, 'application/xml');
+    if (documentXML.querySelector('parsererror')) throw new Error('The XLSX file contains invalid worksheet XML.');
+    return documentXML;
+  }
+
+  function excelColumnIndex(reference) {
+    const letters = String(reference || '').match(/[A-Z]+/i)?.[0]?.toUpperCase() || 'A';
+    let index = 0;
+    for (const letter of letters) index = index * 26 + letter.charCodeAt(0) - 64;
+    return index - 1;
+  }
+
+  function worksheetMatrix(xmlText, sharedStrings) {
+    const documentXML = xmlDocument(xmlText);
+    return [...documentXML.getElementsByTagName('row')].map((row) => {
+      const values = [];
+      [...row.getElementsByTagName('c')].forEach((cell) => {
+        const index = excelColumnIndex(cell.getAttribute('r'));
+        const type = cell.getAttribute('t');
+        let value = '';
+        if (type === 'inlineStr') value = [...cell.getElementsByTagName('t')].map((item) => item.textContent || '').join('');
+        else {
+          const raw = cell.getElementsByTagName('v')[0]?.textContent ?? '';
+          value = type === 's' ? (sharedStrings[Number(raw)] ?? '') : raw;
+        }
+        values[index] = value;
+      });
+      return values;
+    });
+  }
+
+  async function readXlsxRows(file) {
+    if (typeof JSZip === 'undefined') throw new Error('The Excel reader did not load. Make sure jszip.min.js is uploaded beside this page.');
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const sharedFile = zip.file('xl/sharedStrings.xml');
+    let sharedStrings = [];
+    if (sharedFile) {
+      const sharedXML = xmlDocument(await sharedFile.async('text'));
+      sharedStrings = [...sharedXML.getElementsByTagName('si')].map((item) => [...item.getElementsByTagName('t')].map((text) => text.textContent || '').join(''));
+    }
+    const workbookFile = zip.file('xl/workbook.xml');
+    const relationsFile = zip.file('xl/_rels/workbook.xml.rels');
+    if (!workbookFile || !relationsFile) throw new Error('This does not appear to be a valid XLSX workbook.');
+    const workbookXML = xmlDocument(await workbookFile.async('text'));
+    const relationsXML = xmlDocument(await relationsFile.async('text'));
+    const relationships = new Map([...relationsXML.getElementsByTagName('Relationship')].map((item) => [item.getAttribute('Id'), item.getAttribute('Target')]));
+    const allRows = [];
+    for (const sheet of [...workbookXML.getElementsByTagName('sheet')]) {
+      const relationshipId = sheet.getAttribute('r:id') || sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+      const target = relationships.get(relationshipId);
+      if (!target) continue;
+      const worksheetPath = target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.\//, '')}`;
+      const worksheetFile = zip.file(worksheetPath);
+      if (!worksheetFile) continue;
+      allRows.push(...rowsFromMatrix(worksheetMatrix(await worksheetFile.async('text'), sharedStrings)));
+    }
+    return allRows;
+  }
+
+  async function readUploadedRows(file) {
+    const extension = file.name.split('.').pop().toLowerCase();
+    if (extension === 'xlsx') return readXlsxRows(file);
+    if (extension === 'csv' || extension === 'tsv') {
+      const text = await file.text();
+      const delimiter = extension === 'tsv' ? '\t' : ((text.split(/\r?\n/, 1)[0].match(/\t/g) || []).length > (text.split(/\r?\n/, 1)[0].match(/,/g) || []).length ? '\t' : ',');
+      return parseDelimitedText(text, delimiter);
+    }
+    throw new Error('Use an XLSX, CSV or TSV file. Old .xls files should first be saved as .xlsx.');
+  }
+
+  function lightBandsFor(conditionName, start, end) {
+    const name = String(conditionName).toUpperCase();
+    if (name.includes('_LL')) return [{ start, end, type: 'light' }];
+    if (name.includes('_DD')) return [{ start, end, type: 'dark' }];
+    const bands = [];
+    for (let bandStart = Math.floor(start / 12) * 12; bandStart < end; bandStart += 12) {
+      bands.push({ start: Math.max(start, bandStart), end: Math.min(end, bandStart + 12), type: Math.floor(bandStart / 12) % 2 === 0 ? 'light' : 'dark' });
+    }
+    return bands;
+  }
+
+  function refreshConditionOptions(selectedId) {
+    conditionSelect.innerHTML = '';
+    CONDITIONS.forEach((condition) => conditionSelect.add(new Option(condition.label, condition.id)));
+    if (selectedId && CONDITIONS.some((condition) => condition.id === selectedId)) conditionSelect.value = selectedId;
+  }
+
+  function registerDiurnalRows(rows, fileName) {
+    if (!rows.length) throw new Error('No data rows were found in the workbook.');
+    const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+    const findHeader = (...names) => headers.find((header) => names.includes(headerKey(header)));
+    const geneHeader = findHeader('geneid', 'gene', 'agi', 'agiid');
+    const genomeHeader = findHeader('genome', 'organism', 'species');
+    const conditionHeader = findHeader('condition', 'dataset');
+    const phaseHeader = findHeader('phase', 'phasezt', 'ztphase');
+    const correlationHeader = findHeader('correlation', 'pearsoncorrelation', 'pearsonr', 'r');
+    const timeFields = headers.map((header) => ({ header, time: timeFromHeader(header) })).filter((item) => Number.isFinite(item.time)).sort((a, b) => a.time - b.time);
+    if (!geneHeader || !conditionHeader || !phaseHeader || !correlationHeader || timeFields.length < 2) throw new Error('Required columns were not found. Use GeneID, Condition, Phase, Correlation and at least two numeric time columns.');
+
+    const grouped = new Map();
+    rows.forEach((row) => {
+      const gene = normaliseHeader(row[geneHeader]).toUpperCase();
+      const conditionName = normaliseHeader(row[conditionHeader]);
+      if (!gene || !conditionName) return;
+      if (!grouped.has(conditionName)) grouped.set(conditionName, new Map());
+      const values = new Map(timeFields.map(({ header, time }) => {
+        const value = Number(row[header]);
+        return [time, Number.isFinite(value) ? value : null];
+      }));
+      const phaseValue = Number(row[phaseHeader]);
+      const correlationValue = Number(row[correlationHeader]);
+      grouped.get(conditionName).set(gene, {
+        gene,
+        genome: normaliseHeader(genomeHeader ? row[genomeHeader] : '') || 'A. thaliana',
+        condition: conditionName,
+        phase: Number.isFinite(phaseValue) ? phaseValue : null,
+        correlation: Number.isFinite(correlationValue) ? correlationValue : null,
+        values
+      });
+    });
+    if (!grouped.size) throw new Error('No valid GeneID and Condition combinations were found.');
+
+    for (let index = CONDITIONS.length - 1; index >= 0; index--) if (CONDITIONS[index].source === 'uploaded-diurnal') CONDITIONS.splice(index, 1);
+    state.uploadedConditions.clear();
+    grouped.forEach((rowsByGene, conditionName) => {
+      const times = [...new Set(timeFields.map((item) => item.time))].sort((a, b) => a - b);
+      const start = times[0], end = times[times.length - 1];
+      const first = rowsByGene.values().next().value;
+      const id = `DIURNAL::${conditionName}`;
+      const dataset = { rowsByGene, times, fileName };
+      state.uploadedConditions.set(id, dataset);
+      CONDITIONS.push({
+        id,
+        conditionName,
+        label: `DIURNAL · ${conditionName} · uploaded`,
+        source: 'uploaded-diurnal',
+        organism: first?.genome || 'A. thaliana',
+        ecotype: first?.genome || 'A. thaliana',
+        tissue: 'Uploaded DIURNAL table',
+        temperature: 'Source-defined',
+        photoperiod: conditionName.toUpperCase().includes('_LD') ? '12 h light / 12 h dark' : 'Source-defined light regime',
+        timeOffset: 0,
+        plotStart: start,
+        plotEnd: end,
+        axisLabel: 'Time (hours)',
+        lightBands: lightBandsFor(conditionName, start, end),
+        uploadedData: dataset
+      });
+    });
+    return `DIURNAL::${grouped.keys().next().value}`;
+  }
+
+  async function handleDiurnalUpload() {
+    const file = diurnalFileInput.files?.[0];
+    if (!file) return;
+    clearError();
+    el('loading').style.display = 'grid';
+    el('loadingText').textContent = `Reading ${file.name}…`;
+    try {
+      const rows = await readUploadedRows(file);
+      const firstConditionId = registerDiurnalRows(rows, file.name);
+      refreshConditionOptions(firstConditionId);
+      await loadCondition(firstConditionId);
+    } catch (error) {
+      showError(`The DIURNAL file could not be loaded. ${error.message}`);
+      el('datasetStatus').textContent = 'Uploaded dataset loading failed.';
+    } finally {
+      el('loading').style.display = 'none';
+    }
   }
 
   function parseHeader(header, index) {
@@ -105,9 +316,26 @@
     state.rhythmCache.clear();
     state.modelLibraries.clear();
     state.linesByGene.clear();
+    state.importedRows = null;
     el('loading').style.display = 'grid';
     el('loadingText').textContent = `Reading ${condition.id}…`;
     try {
+      if (condition.source === 'uploaded-diurnal') {
+        const dataset = state.uploadedConditions.get(condition.id) || condition.uploadedData;
+        if (!dataset) throw new Error('The uploaded condition is no longer available. Upload the file again.');
+        state.importedRows = dataset.rowsByGene;
+        state.geneIds = [...dataset.rowsByGene.keys()];
+        state.geneIds.forEach((gene) => state.linesByGene.set(gene, gene));
+        state.headers = ['GeneID', 'Genome', 'Condition', 'Phase', 'Correlation', ...dataset.times.map(String)];
+        state.sampleGroups = { Expression: dataset.times.map((time, index) => ({ index: index + 5, header: String(time), type: 'Expression', time, replicate: 1 })) };
+        dataTypeSelect.innerHTML = '<option value="Expression">DIURNAL expression</option>';
+        dataTypeSelect.value = 'Expression';
+        state.loaded = true;
+        renderConditionMeta();
+        renderAll();
+        el('datasetStatus').textContent = `${state.geneIds.length.toLocaleString()} genes loaded from ${dataset.fileName}. The file remains in this browser only.`;
+        return;
+      }
       const response = await fetch(condition.csv);
       if (!response.ok) throw new Error(`Dataset request failed (${response.status}).`);
       const text = await response.text();
@@ -136,16 +364,34 @@
 
   function renderConditionMeta() {
     const c = state.condition;
+    const uploaded = c.source === 'uploaded-diurnal';
     el('conditionMeta').innerHTML = [
-      ['Condition', c.id], ['Material', `${c.ecotype} · ${c.tissue}`], ['Environment', `${c.photoperiod} · ${c.temperature}`], ['Time axis', `${c.plotStart}–${c.plotEnd} h · source coordinate`]
+      ['Condition', uploaded ? c.conditionName : c.id], ['Material', uploaded ? c.organism : `${c.ecotype} · ${c.tissue}`], ['Environment', `${c.photoperiod}${uploaded ? '' : ` · ${c.temperature}`}`], ['Time axis', `${c.plotStart}–${c.plotEnd} h`]
     ].map(([label, value]) => `<div class="meta"><span>${label}</span><strong>${value}</strong></div>`).join('');
     el('lightBadge').textContent = c.photoperiod;
+    [correlationCutoffInput, foldCutoffInput, backgroundCutoffInput].forEach((input) => { input.closest('.field').style.display = uploaded ? 'none' : 'block'; });
+    el('methodNote').innerHTML = uploaded
+      ? '<strong>Uploaded DIURNAL condition:</strong> phase and correlation are read directly from the file. Expression columns are plotted in numeric time order. The file is processed locally and is not uploaded to a server.'
+      : '<strong>Built-in GEAR condition:</strong> replicate values are averaged at each sampled time. The page compares the mean profile with five approximate 24-hour waveform families at phases ZT0–ZT23 and reports the highest Pearson correlation. The oscillation call is an exploratory HAYSTACK-inspired screen.';
   }
 
   function getGeneData(gene) {
     const type = dataTypeSelect.value;
     const cacheKey = `${gene}|${type}`;
     if (state.parsedGenes.has(cacheKey)) return state.parsedGenes.get(cacheKey);
+    if (state.condition.source === 'uploaded-diurnal') {
+      const row = state.importedRows?.get(gene);
+      if (!row) return null;
+      const points = state.condition.uploadedData.times.map((time) => {
+        const value = row.values.get(time);
+        return { time, replicates: [{ replicate: 1, value, sourceColumn: String(time) }], mean: Number.isFinite(value) ? value : null };
+      });
+      const valid = points.filter((point) => Number.isFinite(point.mean));
+      const peak = valid.length ? valid.reduce((best, point) => point.mean > best.mean ? point : best) : null;
+      const result = { gene, type, points, peakTime: peak?.time ?? null, maxMean: peak?.mean ?? null, available: valid.length, total: points.length, genome: row.genome, conditionName: row.condition, suppliedPhase: row.phase, suppliedCorrelation: row.correlation };
+      state.parsedGenes.set(cacheKey, result);
+      return result;
+    }
     const line = state.linesByGene.get(gene);
     if (!line) return null;
     const values = parseCSVLine(line);
@@ -216,15 +462,20 @@
     const data = getGeneData(gene);
     const validPoints = data.points.filter((point) => Number.isFinite(point.mean));
     const values = validPoints.map((point) => point.mean);
-    const ztTimes = validPoints.map((point) => (point.time + 12) % 24);
+    const minimum = values.length ? Math.min(...values) : null;
+    const maximum = values.length ? Math.max(...values) : null;
+    const foldChange = minimum == null || maximum == null ? null : minimum > 0 ? maximum / minimum : maximum > 0 ? Infinity : 1;
+    if (state.condition.source === 'uploaded-diurnal') {
+      const result = { phase: data.suppliedPhase, correlation: data.suppliedCorrelation, model: 'DIURNAL supplied', minimum, maximum, foldChange };
+      state.rhythmCache.set(cacheKey, result);
+      return result;
+    }
+    const ztTimes = validPoints.map((point) => (point.time + (state.condition.ztOffset || 0)) % 24);
     let best = { phase: null, correlation: null, model: '—' };
     getModelLibrary(ztTimes).forEach((candidate) => {
       const correlation = pearsonCorrelation(values, candidate.values);
       if (correlation != null && (best.correlation == null || correlation > best.correlation)) best = { phase: candidate.phase, correlation, model: candidate.model };
     });
-    const minimum = values.length ? Math.min(...values) : null;
-    const maximum = values.length ? Math.max(...values) : null;
-    const foldChange = minimum == null || maximum == null ? null : minimum > 0 ? maximum / minimum : maximum > 0 ? Infinity : 1;
     const result = { ...best, minimum, maximum, foldChange };
     state.rhythmCache.set(cacheKey, result);
     return result;
@@ -348,7 +599,7 @@
     });
     ctx.fillStyle = '#16352c'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
     state.condition.lightBands.forEach((band) => ctx.fillText(band.type.toUpperCase(), x((band.start + band.end) / 2), margin.top + 16));
-    ctx.fillStyle = '#61736c'; ctx.font = '12px Arial'; ctx.fillText('Stored plot coordinate (hours)', margin.left + plotW / 2, height - 12);
+    ctx.fillStyle = '#61736c'; ctx.font = '12px Arial'; ctx.fillText(state.condition.axisLabel || 'Time (hours)', margin.left + plotW / 2, height - 12);
     ctx.save(); ctx.translate(15, margin.top + plotH / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(displayScaleSelect.value === 'rescaled' ? 'Per-gene rescaled expression (0–1)' : `${dataTypeSelect.value} expression`, 0, 0); ctx.restore();
 
     const showReplicates = series.length <= 60;
@@ -364,6 +615,13 @@
         if (!started) { ctx.moveTo(x(point.time + timeOffset), y(point.plotMean)); started = true; } else ctx.lineTo(x(point.time + timeOffset), y(point.plotMean));
       });
       ctx.strokeStyle = color; ctx.lineWidth = series.length > 1000 ? .5 : series.length > 100 ? 1 : 2; ctx.globalAlpha = series.length > 1000 ? .18 : series.length > 100 ? .55 : .9; ctx.stroke(); ctx.globalAlpha = 1;
+      if (state.condition.source === 'uploaded-diurnal' && series.length <= 60 && Number.isFinite(item.data.suppliedPhase)) {
+        for (let markerTime = item.data.suppliedPhase; markerTime <= plotEnd; markerTime += 24) {
+          if (markerTime < plotStart) continue;
+          const markerX = x(markerTime);
+          ctx.beginPath(); ctx.moveTo(markerX - 4, margin.top + 3); ctx.lineTo(markerX + 4, margin.top + 3); ctx.lineTo(markerX, margin.top + 10); ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+        }
+      }
     });
   }
 
@@ -371,7 +629,7 @@
     el('selectionCount').textContent = `${state.selected.length} selected`;
     el('selectedSummary').textContent = state.selected.length ? `${state.selected.length} valid gene${state.selected.length === 1 ? '' : 's'} selected.` : 'No genes selected.';
     const visible = state.selected.slice(0, 100);
-    el('selectedGenes').innerHTML = visible.map((gene, index) => `<div class="chip"><span><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${colorFor(index)};margin-right:6px"></i>${gene}</span><button type="button" data-remove="${gene}" aria-label="Remove ${gene}">×</button></div>`).join('') + (state.selected.length > 100 ? `<div class="selected-summary">+ ${state.selected.length - 100} additional genes</div>` : '');
+    el('selectedGenes').innerHTML = visible.map((gene, index) => `<div class="chip"><span><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${colorFor(index)};margin-right:6px"></i>${escapeHTML(gene)}</span><button type="button" data-remove="${escapeHTML(gene)}" aria-label="Remove ${escapeHTML(gene)}">×</button></div>`).join('') + (state.selected.length > 100 ? `<div class="selected-summary">+ ${state.selected.length - 100} additional genes</div>` : '');
     el('selectedGenes').querySelectorAll('[data-remove]').forEach((button) => button.addEventListener('click', () => removeGene(button.dataset.remove)));
     el('download').disabled = !state.selected.length;
   }
@@ -379,12 +637,35 @@
   function renderLegend() {
     if (!state.selected.length) { el('legend').innerHTML = ''; return; }
     const maxLegend = 120;
-    el('legend').innerHTML = state.selected.slice(0, maxLegend).map((gene, index) => `<span class="legend-item"><i class="legend-swatch" style="background:${colorFor(index)}"></i>${gene}</span>`).join('') + (state.selected.length > maxLegend ? `<span class="legend-item">+${state.selected.length - maxLegend} more genes</span>` : '');
+    const uploaded = state.condition.source === 'uploaded-diurnal';
+    el('legend').innerHTML = state.selected.slice(0, maxLegend).map((gene, index) => {
+      const data = uploaded ? getGeneData(gene) : null;
+      const detail = data ? ` · phase ${data.suppliedPhase == null ? '—' : `ZT${data.suppliedPhase}`} · r ${data.suppliedCorrelation == null ? '—' : data.suppliedCorrelation.toFixed(3)}` : '';
+      return `<span class="legend-item"><i class="legend-swatch" style="background:${colorFor(index)}"></i>${escapeHTML(gene)}${detail}</span>`;
+    }).join('') + (state.selected.length > maxLegend ? `<span class="legend-item">+${state.selected.length - maxLegend} more genes</span>` : '');
   }
 
   function renderResults() {
     const body = el('resultsBody');
     const head = el('resultsHead');
+    if (state.condition.source === 'uploaded-diurnal') {
+      const times = state.condition.uploadedData.times;
+      head.innerHTML = `<tr><th>GeneID</th><th>Genome</th><th>Condition</th><th>Phase</th><th>Correlation</th>${times.map((time) => `<th>${time}</th>`).join('')}</tr>`;
+      if (!state.selected.length) {
+        body.innerHTML = `<tr><td colspan="${5 + times.length}">No genes selected.</td></tr>`;
+        el('rhythmSummary').textContent = 'Select genes to display their DIURNAL phase, correlation and expression values.';
+        return;
+      }
+      const previewLimit = 1000;
+      body.innerHTML = state.selected.slice(0, previewLimit).map((gene) => {
+        const data = getGeneData(gene);
+        const row = state.importedRows.get(gene);
+        const meanByTime = new Map(data.points.map((point) => [point.time, point.mean]));
+        return `<tr><td><strong>${escapeHTML(gene)}</strong></td><td>${escapeHTML(row.genome)}</td><td>${escapeHTML(row.condition)}</td><td class="number">${row.phase == null ? '—' : row.phase}</td><td class="number">${row.correlation == null ? '—' : row.correlation.toFixed(6)}</td>${times.map((time) => `<td class="number">${Number.isFinite(meanByTime.get(time)) ? meanByTime.get(time).toFixed(5).replace(/0+$/, '').replace(/\.$/, '') : ''}</td>`).join('')}</tr>`;
+      }).join('') + (state.selected.length > previewLimit ? `<tr><td colspan="${5 + times.length}"><strong>${(state.selected.length - previewLimit).toLocaleString()} additional genes</strong> are plotted and included in the download but omitted from this table preview.</td></tr>` : '');
+      el('rhythmSummary').textContent = `${Math.min(state.selected.length, previewLimit).toLocaleString()} selected genes displayed for ${state.condition.conditionName}. Phase and correlation are supplied by the DIURNAL file.${state.selected.length > previewLimit ? ' The table previews 1,000 rows; the graph and download include every selected gene.' : ''}`;
+      return;
+    }
     const timeOffset = state.condition.timeOffset || 0;
     const samples = state.sampleGroups[dataTypeSelect.value] || [];
     const sourceTimes = [...new Set(samples.map((sample) => sample.time))].sort((a, b) => a - b);
@@ -404,7 +685,7 @@
       const oscillating = isOscillating(analysis, cutoffs);
       if (oscillating) oscillatingCount++;
       const meanByTime = new Map(data.points.map((point) => [point.time, point.mean]));
-      return `<tr><td><strong>${gene}</strong></td><td>${state.condition.id}</td><td><span class="call ${oscillating ? 'yes' : 'no'}">${oscillating ? 'Yes' : 'No'}</span></td><td class="number">${analysis.phase == null ? '—' : analysis.phase}</td><td class="number">${analysis.correlation == null ? '—' : analysis.correlation.toFixed(6)}</td><td>${analysis.model}</td><td class="number">${analysis.foldChange == null ? '—' : Number.isFinite(analysis.foldChange) ? analysis.foldChange.toFixed(3) : '∞'}</td>${sourceTimes.map((time) => `<td class="number">${Number.isFinite(meanByTime.get(time)) ? meanByTime.get(time).toFixed(4) : ''}</td>`).join('')}</tr>`;
+      return `<tr><td><strong>${escapeHTML(gene)}</strong></td><td>${escapeHTML(state.condition.id)}</td><td><span class="call ${oscillating ? 'yes' : 'no'}">${oscillating ? 'Yes' : 'No'}</span></td><td class="number">${analysis.phase == null ? '—' : analysis.phase}</td><td class="number">${analysis.correlation == null ? '—' : analysis.correlation.toFixed(6)}</td><td>${analysis.model}</td><td class="number">${analysis.foldChange == null ? '—' : Number.isFinite(analysis.foldChange) ? analysis.foldChange.toFixed(3) : '∞'}</td>${sourceTimes.map((time) => `<td class="number">${Number.isFinite(meanByTime.get(time)) ? meanByTime.get(time).toFixed(4) : ''}</td>`).join('')}</tr>`;
     }).join('') + (state.selected.length > previewLimit ? `<tr><td colspan="${7 + displayTimes.length}"><strong>${(state.selected.length - previewLimit).toLocaleString()} additional genes</strong> are included in the graph and wide CSV download but omitted from this table preview.</td></tr>` : '');
     const previewed = Math.min(state.selected.length, previewLimit);
     el('rhythmSummary').textContent = `${oscillatingCount.toLocaleString()} of ${previewed.toLocaleString()} displayed genes pass correlation ≥ ${cutoffs.correlation.toFixed(2)}, fold ≥ ${cutoffs.fold.toFixed(1)}, and maximum expression ≥ ${cutoffs.background}. ${state.selected.length > previewLimit ? 'The summary covers the 1,000-row preview; the download evaluates every selected gene.' : ''}`;
@@ -413,12 +694,25 @@
   function renderAll() {
     renderSelected(); renderLegend(); renderResults();
     el('empty').style.display = state.selected.length ? 'none' : 'grid';
-    el('chartSubtitle').textContent = state.selected.length ? `${state.selected.length} gene${state.selected.length === 1 ? '' : 's'} · means connected by lines${state.selected.length <= 60 ? ' · replicate points shown' : ''}` : 'Select one or more genes to draw their expression profiles.';
+    const uploaded = state.condition?.source === 'uploaded-diurnal';
+    el('chartSubtitle').textContent = state.selected.length
+      ? `${state.selected.length} gene${state.selected.length === 1 ? '' : 's'} · ${uploaded ? 'DIURNAL expression lines' : 'means connected by lines'}${uploaded && state.selected.length <= 60 ? ' · phase triangles shown at the top' : !uploaded && state.selected.length <= 60 ? ' · replicate points shown' : ''}`
+      : 'Select one or more genes to draw their expression profiles.';
     requestAnimationFrame(drawChart);
   }
 
   function downloadSelected() {
     if (!state.selected.length) return;
+    if (state.condition.source === 'uploaded-diurnal') {
+      const times = state.condition.uploadedData.times;
+      const rows = [['GeneID', 'Genome', 'Condition', 'Phase', 'Correlation', ...times]];
+      state.selected.forEach((gene) => {
+        const row = state.importedRows.get(gene);
+        rows.push([gene, row.genome, row.condition, row.phase ?? '', row.correlation ?? '', ...times.map((time) => row.values.get(time) ?? '')]);
+      });
+      saveCSV(rows, `${state.condition.conditionName}_${state.selected.length}_selected_genes.csv`);
+      return;
+    }
     const timeOffset = state.condition.timeOffset || 0;
     const samples = state.sampleGroups[dataTypeSelect.value] || [];
     const sourceTimes = [...new Set(samples.map((sample) => sample.time))].sort((a, b) => a - b);
@@ -431,14 +725,19 @@
       const meanByTime = new Map(data.points.map((point) => [point.time, point.mean]));
       rows.push([gene, state.condition.id, isOscillating(analysis, cutoffs) ? 'Yes' : 'No', analysis.phase ?? '', analysis.correlation == null ? '' : analysis.correlation.toFixed(6), analysis.model, analysis.foldChange == null ? '' : Number.isFinite(analysis.foldChange) ? analysis.foldChange.toFixed(6) : 'Infinity', ...sourceTimes.map((time) => Number.isFinite(meanByTime.get(time)) ? meanByTime.get(time).toFixed(6) : '')]);
     });
-    const escape = (value) => { const text = String(value ?? ''); return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; };
-    const blob = new Blob([rows.map((row) => row.map(escape).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob); const anchor = document.createElement('a');
-    anchor.href = url; anchor.download = `${state.condition.id}_${dataTypeSelect.value}_${state.selected.length}_genes_phase_correlation.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+    saveCSV(rows, `${state.condition.id}_${dataTypeSelect.value}_${state.selected.length}_genes_phase_correlation.csv`);
   }
 
-  CONDITIONS.forEach((condition) => conditionSelect.add(new Option(condition.label, condition.id)));
+  function saveCSV(rows, fileName) {
+    const escape = (value) => { const text = String(value ?? ''); return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; };
+    const blob = new Blob(['\uFEFF', rows.map((row) => row.map(escape).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob); const anchor = document.createElement('a');
+    anchor.href = url; anchor.download = fileName; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+  }
+
+  refreshConditionOptions(CONDITIONS[0].id);
   conditionSelect.addEventListener('change', () => loadCondition(conditionSelect.value));
+  diurnalFileInput.addEventListener('change', handleDiurnalUpload);
   dataTypeSelect.addEventListener('change', () => { state.parsedGenes.clear(); state.rhythmCache.clear(); renderAll(); });
   displayScaleSelect.addEventListener('change', renderAll);
   [correlationCutoffInput, foldCutoffInput, backgroundCutoffInput].forEach((input) => input.addEventListener('change', renderResults));
