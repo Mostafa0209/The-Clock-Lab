@@ -1,9 +1,31 @@
 (() => {
   'use strict';
 
-  // Add future conditions here. Each condition can use a separate CSV with the
-  // same first-column gene layout and "TYPE | name-00h_REP" sample headers.
+  // Permanent DIURNAL wide-format conditions and built-in GEAR conditions.
   const CONDITIONS = [
+    {
+      id: 'COL_LDHH',
+      conditionName: 'COL_LDHH',
+      label: 'DIURNAL · COL_LDHH · Col-0 seedlings · 12L:12D',
+      source: 'permanent-diurnal',
+      csv: 'DIURNAL_COL_LDHH.csv',
+      organism: 'A. thaliana',
+      ecotype: 'Col-0',
+      tissue: 'Seedlings',
+      temperature: '22°C',
+      photoperiod: '12 h light / 12 h dark',
+      times: [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44],
+      timeOffset: 0,
+      plotStart: 0,
+      plotEnd: 44,
+      axisLabel: 'Time (hours)',
+      lightBands: [
+        { start: 0, end: 12, type: 'light' },
+        { start: 12, end: 24, type: 'dark' },
+        { start: 24, end: 36, type: 'light' },
+        { start: 36, end: 44, type: 'dark' }
+      ]
+    },
     {
       id: 'GEAR-ID001',
       label: 'GEAR-ID001 · Smith 2004 · Col-0 leaves · 12L:12D',
@@ -40,7 +62,6 @@
     parsedGenes: new Map(),
     rhythmCache: new Map(),
     modelLibraries: new Map(),
-    uploadedConditions: new Map(),
     importedRows: null,
     loaded: false
   };
@@ -52,7 +73,6 @@
   const correlationCutoffInput = el('correlationCutoff');
   const foldCutoffInput = el('foldCutoff');
   const backgroundCutoffInput = el('backgroundCutoff');
-  const diurnalFileInput = el('diurnalFile');
   const geneInput = el('geneInput');
   const errorBox = el('error');
   const canvas = el('chart');
@@ -80,205 +100,14 @@
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   }
 
-  function normaliseHeader(value) {
-    return String(value ?? '').replace(/^\uFEFF/, '').trim();
-  }
-
-  function headerKey(value) {
-    return normaliseHeader(value).toLowerCase().replace(/[\s_-]+/g, '');
-  }
-
-  function timeFromHeader(value) {
-    const match = normaliseHeader(value).match(/^(?:zt)?(-?\d+(?:\.\d+)?)(?:h)?$/i);
-    return match ? Number(match[1]) : null;
-  }
-
-  function rowsFromMatrix(matrix) {
-    const headerIndex = matrix.findIndex((row) => row.filter((value) => normaliseHeader(value) !== '').length >= 2);
-    if (headerIndex < 0) return [];
-    const headers = matrix[headerIndex].map(normaliseHeader);
-    return matrix.slice(headerIndex + 1).filter((row) => row.some((value) => normaliseHeader(value) !== '')).map((row) => {
-      const record = {};
-      headers.forEach((header, index) => { if (header) record[header] = row[index] ?? ''; });
-      return record;
-    });
-  }
-
-  function parseDelimitedText(text, delimiter) {
-    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim() !== '');
-    return rowsFromMatrix(lines.map((line) => parseCSVLine(line, delimiter)));
-  }
-
-  function xmlDocument(text) {
-    const documentXML = new DOMParser().parseFromString(text, 'application/xml');
-    if (documentXML.querySelector('parsererror')) throw new Error('The XLSX file contains invalid worksheet XML.');
-    return documentXML;
-  }
-
-  function excelColumnIndex(reference) {
-    const letters = String(reference || '').match(/[A-Z]+/i)?.[0]?.toUpperCase() || 'A';
-    let index = 0;
-    for (const letter of letters) index = index * 26 + letter.charCodeAt(0) - 64;
-    return index - 1;
-  }
-
-  function worksheetMatrix(xmlText, sharedStrings) {
-    const documentXML = xmlDocument(xmlText);
-    return [...documentXML.getElementsByTagName('row')].map((row) => {
-      const values = [];
-      [...row.getElementsByTagName('c')].forEach((cell) => {
-        const index = excelColumnIndex(cell.getAttribute('r'));
-        const type = cell.getAttribute('t');
-        let value = '';
-        if (type === 'inlineStr') value = [...cell.getElementsByTagName('t')].map((item) => item.textContent || '').join('');
-        else {
-          const raw = cell.getElementsByTagName('v')[0]?.textContent ?? '';
-          value = type === 's' ? (sharedStrings[Number(raw)] ?? '') : raw;
-        }
-        values[index] = value;
-      });
-      return values;
-    });
-  }
-
-  async function readXlsxRows(file) {
-    if (typeof JSZip === 'undefined') throw new Error('The Excel reader did not load. Make sure jszip.min.js is uploaded beside this page.');
-    const zip = await JSZip.loadAsync(await file.arrayBuffer());
-    const sharedFile = zip.file('xl/sharedStrings.xml');
-    let sharedStrings = [];
-    if (sharedFile) {
-      const sharedXML = xmlDocument(await sharedFile.async('text'));
-      sharedStrings = [...sharedXML.getElementsByTagName('si')].map((item) => [...item.getElementsByTagName('t')].map((text) => text.textContent || '').join(''));
-    }
-    const workbookFile = zip.file('xl/workbook.xml');
-    const relationsFile = zip.file('xl/_rels/workbook.xml.rels');
-    if (!workbookFile || !relationsFile) throw new Error('This does not appear to be a valid XLSX workbook.');
-    const workbookXML = xmlDocument(await workbookFile.async('text'));
-    const relationsXML = xmlDocument(await relationsFile.async('text'));
-    const relationships = new Map([...relationsXML.getElementsByTagName('Relationship')].map((item) => [item.getAttribute('Id'), item.getAttribute('Target')]));
-    const allRows = [];
-    for (const sheet of [...workbookXML.getElementsByTagName('sheet')]) {
-      const relationshipId = sheet.getAttribute('r:id') || sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
-      const target = relationships.get(relationshipId);
-      if (!target) continue;
-      const worksheetPath = target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.\//, '')}`;
-      const worksheetFile = zip.file(worksheetPath);
-      if (!worksheetFile) continue;
-      allRows.push(...rowsFromMatrix(worksheetMatrix(await worksheetFile.async('text'), sharedStrings)));
-    }
-    return allRows;
-  }
-
-  async function readUploadedRows(file) {
-    const extension = file.name.split('.').pop().toLowerCase();
-    if (extension === 'xlsx') return readXlsxRows(file);
-    if (extension === 'csv' || extension === 'tsv') {
-      const text = await file.text();
-      const delimiter = extension === 'tsv' ? '\t' : ((text.split(/\r?\n/, 1)[0].match(/\t/g) || []).length > (text.split(/\r?\n/, 1)[0].match(/,/g) || []).length ? '\t' : ',');
-      return parseDelimitedText(text, delimiter);
-    }
-    throw new Error('Use an XLSX, CSV or TSV file. Old .xls files should first be saved as .xlsx.');
-  }
-
-  function lightBandsFor(conditionName, start, end) {
-    const name = String(conditionName).toUpperCase();
-    if (name.includes('_LL')) return [{ start, end, type: 'light' }];
-    if (name.includes('_DD')) return [{ start, end, type: 'dark' }];
-    const bands = [];
-    for (let bandStart = Math.floor(start / 12) * 12; bandStart < end; bandStart += 12) {
-      bands.push({ start: Math.max(start, bandStart), end: Math.min(end, bandStart + 12), type: Math.floor(bandStart / 12) % 2 === 0 ? 'light' : 'dark' });
-    }
-    return bands;
-  }
-
   function refreshConditionOptions(selectedId) {
     conditionSelect.innerHTML = '';
     CONDITIONS.forEach((condition) => conditionSelect.add(new Option(condition.label, condition.id)));
     if (selectedId && CONDITIONS.some((condition) => condition.id === selectedId)) conditionSelect.value = selectedId;
   }
 
-  function registerDiurnalRows(rows, fileName) {
-    if (!rows.length) throw new Error('No data rows were found in the workbook.');
-    const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
-    const findHeader = (...names) => headers.find((header) => names.includes(headerKey(header)));
-    const geneHeader = findHeader('geneid', 'gene', 'agi', 'agiid');
-    const genomeHeader = findHeader('genome', 'organism', 'species');
-    const conditionHeader = findHeader('condition', 'dataset');
-    const phaseHeader = findHeader('phase', 'phasezt', 'ztphase');
-    const correlationHeader = findHeader('correlation', 'pearsoncorrelation', 'pearsonr', 'r');
-    const timeFields = headers.map((header) => ({ header, time: timeFromHeader(header) })).filter((item) => Number.isFinite(item.time)).sort((a, b) => a.time - b.time);
-    if (!geneHeader || !conditionHeader || !phaseHeader || !correlationHeader || timeFields.length < 2) throw new Error('Required columns were not found. Use GeneID, Condition, Phase, Correlation and at least two numeric time columns.');
-
-    const grouped = new Map();
-    rows.forEach((row) => {
-      const gene = normaliseHeader(row[geneHeader]).toUpperCase();
-      const conditionName = normaliseHeader(row[conditionHeader]);
-      if (!gene || !conditionName) return;
-      if (!grouped.has(conditionName)) grouped.set(conditionName, new Map());
-      const values = new Map(timeFields.map(({ header, time }) => {
-        const value = Number(row[header]);
-        return [time, Number.isFinite(value) ? value : null];
-      }));
-      const phaseValue = Number(row[phaseHeader]);
-      const correlationValue = Number(row[correlationHeader]);
-      grouped.get(conditionName).set(gene, {
-        gene,
-        genome: normaliseHeader(genomeHeader ? row[genomeHeader] : '') || 'A. thaliana',
-        condition: conditionName,
-        phase: Number.isFinite(phaseValue) ? phaseValue : null,
-        correlation: Number.isFinite(correlationValue) ? correlationValue : null,
-        values
-      });
-    });
-    if (!grouped.size) throw new Error('No valid GeneID and Condition combinations were found.');
-
-    for (let index = CONDITIONS.length - 1; index >= 0; index--) if (CONDITIONS[index].source === 'uploaded-diurnal') CONDITIONS.splice(index, 1);
-    state.uploadedConditions.clear();
-    grouped.forEach((rowsByGene, conditionName) => {
-      const times = [...new Set(timeFields.map((item) => item.time))].sort((a, b) => a - b);
-      const start = times[0], end = times[times.length - 1];
-      const first = rowsByGene.values().next().value;
-      const id = `DIURNAL::${conditionName}`;
-      const dataset = { rowsByGene, times, fileName };
-      state.uploadedConditions.set(id, dataset);
-      CONDITIONS.push({
-        id,
-        conditionName,
-        label: `DIURNAL · ${conditionName} · uploaded`,
-        source: 'uploaded-diurnal',
-        organism: first?.genome || 'A. thaliana',
-        ecotype: first?.genome || 'A. thaliana',
-        tissue: 'Uploaded DIURNAL table',
-        temperature: 'Source-defined',
-        photoperiod: conditionName.toUpperCase().includes('_LD') ? '12 h light / 12 h dark' : 'Source-defined light regime',
-        timeOffset: 0,
-        plotStart: start,
-        plotEnd: end,
-        axisLabel: 'Time (hours)',
-        lightBands: lightBandsFor(conditionName, start, end),
-        uploadedData: dataset
-      });
-    });
-    return `DIURNAL::${grouped.keys().next().value}`;
-  }
-
-  async function handleDiurnalUpload() {
-    const file = diurnalFileInput.files?.[0];
-    if (!file) return;
-    clearError();
-    el('loading').style.display = 'grid';
-    el('loadingText').textContent = `Reading ${file.name}…`;
-    try {
-      const rows = await readUploadedRows(file);
-      const firstConditionId = registerDiurnalRows(rows, file.name);
-      refreshConditionOptions(firstConditionId);
-      await loadCondition(firstConditionId);
-    } catch (error) {
-      showError(`The DIURNAL file could not be loaded. ${error.message}`);
-      el('datasetStatus').textContent = 'Uploaded dataset loading failed.';
-    } finally {
-      el('loading').style.display = 'none';
-    }
+  function isDiurnalSource(condition = state.condition) {
+    return condition?.source === 'permanent-diurnal';
   }
 
   function parseHeader(header, index) {
@@ -320,20 +149,47 @@
     el('loading').style.display = 'grid';
     el('loadingText').textContent = `Reading ${condition.id}…`;
     try {
-      if (condition.source === 'uploaded-diurnal') {
-        const dataset = state.uploadedConditions.get(condition.id) || condition.uploadedData;
-        if (!dataset) throw new Error('The uploaded condition is no longer available. Upload the file again.');
-        state.importedRows = dataset.rowsByGene;
-        state.geneIds = [...dataset.rowsByGene.keys()];
+      if (condition.source === 'permanent-diurnal') {
+        const response = await fetch(condition.csv);
+        if (!response.ok) throw new Error(`Dataset request failed (${response.status}).`);
+        const text = await response.text();
+        const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
+        const headers = parseCSVLine(lines[0]);
+        const required = ['GeneID', 'Genome', 'Condition', 'Phase', 'Correlation', ...condition.times.map(String)];
+        if (required.some((header) => !headers.includes(header))) throw new Error('The permanent COL_LDHH file has unexpected columns.');
+        const indexByHeader = new Map(headers.map((header, index) => [header, index]));
+        const rowsByGene = new Map();
+        for (let index = 1; index < lines.length; index++) {
+          const values = parseCSVLine(lines[index]);
+          const gene = String(values[indexByHeader.get('GeneID')] || '').trim().toUpperCase();
+          if (!gene) continue;
+          const phase = Number(values[indexByHeader.get('Phase')]);
+          const correlation = Number(values[indexByHeader.get('Correlation')]);
+          rowsByGene.set(gene, {
+            gene,
+            genome: values[indexByHeader.get('Genome')] || 'A. thaliana',
+            condition: values[indexByHeader.get('Condition')] || condition.conditionName,
+            phase: Number.isFinite(phase) ? phase : null,
+            correlation: Number.isFinite(correlation) ? correlation : null,
+            values: new Map(condition.times.map((time) => {
+              const value = Number(values[indexByHeader.get(String(time))]);
+              return [time, Number.isFinite(value) ? value : null];
+            }))
+          });
+        }
+        const dataset = { rowsByGene, times: condition.times, fileName: 'DIURNAL_COL_LDHH.csv' };
+        condition.diurnalData = dataset;
+        state.importedRows = rowsByGene;
+        state.geneIds = [...rowsByGene.keys()];
         state.geneIds.forEach((gene) => state.linesByGene.set(gene, gene));
-        state.headers = ['GeneID', 'Genome', 'Condition', 'Phase', 'Correlation', ...dataset.times.map(String)];
-        state.sampleGroups = { Expression: dataset.times.map((time, index) => ({ index: index + 5, header: String(time), type: 'Expression', time, replicate: 1 })) };
+        state.headers = required;
+        state.sampleGroups = { Expression: condition.times.map((time, index) => ({ index: index + 5, header: String(time), type: 'Expression', time, replicate: 1 })) };
         dataTypeSelect.innerHTML = '<option value="Expression">DIURNAL expression</option>';
         dataTypeSelect.value = 'Expression';
         state.loaded = true;
         renderConditionMeta();
         renderAll();
-        el('datasetStatus').textContent = `${state.geneIds.length.toLocaleString()} genes loaded from ${dataset.fileName}. The file remains in this browser only.`;
+        el('datasetStatus').textContent = `${state.geneIds.length.toLocaleString()} COL_LDHH genes loaded automatically from the website.`;
         return;
       }
       const response = await fetch(condition.csv);
@@ -364,14 +220,14 @@
 
   function renderConditionMeta() {
     const c = state.condition;
-    const uploaded = c.source === 'uploaded-diurnal';
+    const diurnal = isDiurnalSource(c);
     el('conditionMeta').innerHTML = [
-      ['Condition', uploaded ? c.conditionName : c.id], ['Material', uploaded ? c.organism : `${c.ecotype} · ${c.tissue}`], ['Environment', `${c.photoperiod}${uploaded ? '' : ` · ${c.temperature}`}`], ['Time axis', `${c.plotStart}–${c.plotEnd} h`]
+      ['Condition', diurnal ? c.conditionName : c.id], ['Material', diurnal ? c.organism : `${c.ecotype} · ${c.tissue}`], ['Environment', `${c.photoperiod}${diurnal ? '' : ` · ${c.temperature}`}`], ['Time axis', `${c.plotStart}–${c.plotEnd} h`]
     ].map(([label, value]) => `<div class="meta"><span>${label}</span><strong>${value}</strong></div>`).join('');
     el('lightBadge').textContent = c.photoperiod;
-    [correlationCutoffInput, foldCutoffInput, backgroundCutoffInput].forEach((input) => { input.closest('.field').style.display = uploaded ? 'none' : 'block'; });
-    el('methodNote').innerHTML = uploaded
-      ? '<strong>Uploaded DIURNAL condition:</strong> phase and correlation are read directly from the file. Expression columns are plotted in numeric time order. The file is processed locally and is not uploaded to a server.'
+    [correlationCutoffInput, foldCutoffInput, backgroundCutoffInput].forEach((input) => { input.closest('.field').style.display = diurnal ? 'none' : 'block'; });
+    el('methodNote').innerHTML = diurnal
+      ? '<strong>Permanent DIURNAL condition:</strong> phase and correlation are supplied by the DIURNAL dataset. Expression values are plotted in numeric time order from 0 to 44 hours.'
       : '<strong>Built-in GEAR condition:</strong> replicate values are averaged at each sampled time. The page compares the mean profile with five approximate 24-hour waveform families at phases ZT0–ZT23 and reports the highest Pearson correlation. The oscillation call is an exploratory HAYSTACK-inspired screen.';
   }
 
@@ -379,10 +235,10 @@
     const type = dataTypeSelect.value;
     const cacheKey = `${gene}|${type}`;
     if (state.parsedGenes.has(cacheKey)) return state.parsedGenes.get(cacheKey);
-    if (state.condition.source === 'uploaded-diurnal') {
+    if (isDiurnalSource()) {
       const row = state.importedRows?.get(gene);
       if (!row) return null;
-      const points = state.condition.uploadedData.times.map((time) => {
+      const points = state.condition.diurnalData.times.map((time) => {
         const value = row.values.get(time);
         return { time, replicates: [{ replicate: 1, value, sourceColumn: String(time) }], mean: Number.isFinite(value) ? value : null };
       });
@@ -465,7 +321,7 @@
     const minimum = values.length ? Math.min(...values) : null;
     const maximum = values.length ? Math.max(...values) : null;
     const foldChange = minimum == null || maximum == null ? null : minimum > 0 ? maximum / minimum : maximum > 0 ? Infinity : 1;
-    if (state.condition.source === 'uploaded-diurnal') {
+    if (isDiurnalSource()) {
       const result = { phase: data.suppliedPhase, correlation: data.suppliedCorrelation, model: 'DIURNAL supplied', minimum, maximum, foldChange };
       state.rhythmCache.set(cacheKey, result);
       return result;
@@ -615,7 +471,7 @@
         if (!started) { ctx.moveTo(x(point.time + timeOffset), y(point.plotMean)); started = true; } else ctx.lineTo(x(point.time + timeOffset), y(point.plotMean));
       });
       ctx.strokeStyle = color; ctx.lineWidth = series.length > 1000 ? .5 : series.length > 100 ? 1 : 2; ctx.globalAlpha = series.length > 1000 ? .18 : series.length > 100 ? .55 : .9; ctx.stroke(); ctx.globalAlpha = 1;
-      if (state.condition.source === 'uploaded-diurnal' && series.length <= 60 && Number.isFinite(item.data.suppliedPhase)) {
+      if (isDiurnalSource() && series.length <= 60 && Number.isFinite(item.data.suppliedPhase)) {
         for (let markerTime = item.data.suppliedPhase; markerTime <= plotEnd; markerTime += 24) {
           if (markerTime < plotStart) continue;
           const markerX = x(markerTime);
@@ -637,9 +493,9 @@
   function renderLegend() {
     if (!state.selected.length) { el('legend').innerHTML = ''; return; }
     const maxLegend = 120;
-    const uploaded = state.condition.source === 'uploaded-diurnal';
+    const diurnal = isDiurnalSource();
     el('legend').innerHTML = state.selected.slice(0, maxLegend).map((gene, index) => {
-      const data = uploaded ? getGeneData(gene) : null;
+      const data = diurnal ? getGeneData(gene) : null;
       const detail = data ? ` · phase ${data.suppliedPhase == null ? '—' : `ZT${data.suppliedPhase}`} · r ${data.suppliedCorrelation == null ? '—' : data.suppliedCorrelation.toFixed(3)}` : '';
       return `<span class="legend-item"><i class="legend-swatch" style="background:${colorFor(index)}"></i>${escapeHTML(gene)}${detail}</span>`;
     }).join('') + (state.selected.length > maxLegend ? `<span class="legend-item">+${state.selected.length - maxLegend} more genes</span>` : '');
@@ -648,8 +504,8 @@
   function renderResults() {
     const body = el('resultsBody');
     const head = el('resultsHead');
-    if (state.condition.source === 'uploaded-diurnal') {
-      const times = state.condition.uploadedData.times;
+    if (isDiurnalSource()) {
+      const times = state.condition.diurnalData.times;
       head.innerHTML = `<tr><th>GeneID</th><th>Genome</th><th>Condition</th><th>Phase</th><th>Correlation</th>${times.map((time) => `<th>${time}</th>`).join('')}</tr>`;
       if (!state.selected.length) {
         body.innerHTML = `<tr><td colspan="${5 + times.length}">No genes selected.</td></tr>`;
@@ -694,17 +550,17 @@
   function renderAll() {
     renderSelected(); renderLegend(); renderResults();
     el('empty').style.display = state.selected.length ? 'none' : 'grid';
-    const uploaded = state.condition?.source === 'uploaded-diurnal';
+    const diurnal = isDiurnalSource();
     el('chartSubtitle').textContent = state.selected.length
-      ? `${state.selected.length} gene${state.selected.length === 1 ? '' : 's'} · ${uploaded ? 'DIURNAL expression lines' : 'means connected by lines'}${uploaded && state.selected.length <= 60 ? ' · phase triangles shown at the top' : !uploaded && state.selected.length <= 60 ? ' · replicate points shown' : ''}`
+      ? `${state.selected.length} gene${state.selected.length === 1 ? '' : 's'} · ${diurnal ? 'DIURNAL expression lines' : 'means connected by lines'}${diurnal && state.selected.length <= 60 ? ' · phase triangles shown at the top' : !diurnal && state.selected.length <= 60 ? ' · replicate points shown' : ''}`
       : 'Select one or more genes to draw their expression profiles.';
     requestAnimationFrame(drawChart);
   }
 
   function downloadSelected() {
     if (!state.selected.length) return;
-    if (state.condition.source === 'uploaded-diurnal') {
-      const times = state.condition.uploadedData.times;
+    if (isDiurnalSource()) {
+      const times = state.condition.diurnalData.times;
       const rows = [['GeneID', 'Genome', 'Condition', 'Phase', 'Correlation', ...times]];
       state.selected.forEach((gene) => {
         const row = state.importedRows.get(gene);
@@ -737,7 +593,6 @@
 
   refreshConditionOptions(CONDITIONS[0].id);
   conditionSelect.addEventListener('change', () => loadCondition(conditionSelect.value));
-  diurnalFileInput.addEventListener('change', handleDiurnalUpload);
   dataTypeSelect.addEventListener('change', () => { state.parsedGenes.clear(); state.rhythmCache.clear(); renderAll(); });
   displayScaleSelect.addEventListener('change', renderAll);
   [correlationCutoffInput, foldCutoffInput, backgroundCutoffInput].forEach((input) => input.addEventListener('change', renderResults));
